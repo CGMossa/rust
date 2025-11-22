@@ -367,7 +367,7 @@ impl CString {
     ///
     /// It should be noted that the length isn't just "recomputed," but that
     /// the recomputed length must match the original length from the
-    /// [`CString::into_raw`] call. This means the [`CString::into_raw`]/`from_raw`
+    /// [`CString::into_raw`] call. This means the [`CString::into_raw`]/[`from_raw`]
     /// methods should not be used when passing the string to C functions that can
     /// modify the string's length.
     ///
@@ -380,7 +380,7 @@ impl CString {
     /// # Examples
     ///
     /// Creates a `CString`, pass ownership to an `extern` function (via raw pointer), then retake
-    /// ownership with `from_raw`:
+    /// ownership with [`from_raw`]:
     ///
     /// ```ignore (extern-declaration)
     /// use std::ffi::CString;
@@ -397,6 +397,8 @@ impl CString {
     ///     let c_string = CString::from_raw(raw);
     /// }
     /// ```
+    /// 
+    /// [`from_raw`]: CString::from_raw 
     #[must_use = "call `drop(from_raw(ptr))` if you intend to drop the `CString`"]
     #[stable(feature = "cstr_memory", since = "1.4.0")]
     pub unsafe fn from_raw(ptr: *mut c_char) -> CString {

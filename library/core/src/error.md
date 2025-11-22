@@ -124,6 +124,7 @@ expect-as-precondition style error messages remember to focus on the word
 "should" as in "env variable should be set by blah" or "the given binary
 should be available and executable by the current user".
 
+[`panic!`]: ../../std/panic/fn.panic.html
 [`panic_any`]: ../../std/panic/fn.panic_any.html
 [`PanicHookInfo`]: ../../std/panic/struct.PanicHookInfo.html
 [`PanicInfo`]: crate::panic::PanicInfo
@@ -132,7 +133,6 @@ should be available and executable by the current user".
 [`downcast`]: crate::error::Error
 [`Termination`]: ../../std/process/trait.Termination.html
 [`Try`]: crate::ops::Try
-[panic hook]: ../../std/panic/fn.set_hook.html
 [`set_hook`]: ../../std/panic/fn.set_hook.html
 [`take_hook`]: ../../std/panic/fn.take_hook.html
 [panic-handler]: <https://doc.rust-lang.org/nomicon/panic-handler.html>
