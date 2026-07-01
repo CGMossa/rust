@@ -6,6 +6,24 @@ giant cargo workspace, but **you almost never invoke `cargo` directly** — the
 build system is `./x` (a wrapper over `x.py`). Use `cargo` only inside
 standalone tools (e.g. `src/tools/rust-analyzer`) that say so.
 
+## Working with `claude-dev` (AI files stay out of PRs)
+
+These AI/dev files — `CLAUDE.md`, `EXPERIMENTS.md`, `.claude/skills/` — are
+**tracked only on the `claude-dev` branch**. rust-lang/rust PRs must not contain
+them. The workflow:
+
+- **Edit them on `claude-dev`** and commit there.
+- **On any feature branch**, they don't exist in git — "dump" the current copies
+  in as untracked files:
+  ```bash
+  git archive claude-dev CLAUDE.md EXPERIMENTS.md .claude/skills | tar -x
+  ```
+- They're listed in `.git/info/exclude` (repo-local), so on feature branches git
+  **ignores** them — they never show in `git status` and can't be caught by
+  `git add -A`. **Never `git add` them into a feature/PR branch.**
+- Caveat: because they're excluded, adding a *new* skill on `claude-dev` needs
+  `git add -f .claude/skills/<name>`.
+
 The full contributor manual is in-tree at `src/doc/rustc-dev-guide/src/`
 (the [rustc-dev-guide]). This file is the distilled operating cheat-sheet.
 
