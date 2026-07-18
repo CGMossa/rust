@@ -4,7 +4,7 @@ Running log of what we're hacking on in this checkout, so a fresh session
 knows the state without spelunking through branches. Tracked only on
 `claude-dev` (see the "Working with claude-dev" section in `CLAUDE.md`).
 
-_Last updated: 2026-07-01._
+_Last updated: 2026-07-18._
 
 ---
 
@@ -49,6 +49,24 @@ _Last updated: 2026-07-01._
   (`rust-compiler-internals-book.md`, ~3.8k lines) + a "Chapter 11: Tutorials"
   addition. Pure docs, no compiler changes.
 - **Status:** drafted on branch, ~4 months stale.
+
+## 4. Numerical-accuracy "inlined-calculation lens"
+
+- **Branch:** `claude-dev` only so far (design notes, no tree changes).
+- **Goal:** Tooling that shows the *composed* floating-point computation of a
+  program — post-inlining, post-monomorphization MIR, loops kept as loops — so
+  a reviewer can spot accuracy losses that live across function boundaries:
+  divide-then-rescale round-trips, early rounding/casts, and above all
+  cancellation in convergence *stopping criteria*.
+- **Status:** PoC verified 2026-07-18. Existing flags (`-Zinline-mir` +
+  `--emit=mir`, works on stable via `RUSTC_BOOTSTRAP=1`) already expose the
+  composed expressions with loop CFG and `scope (inlined …)` provenance
+  intact; the gap is readability (3-address form) + slicing. Full write-up —
+  motivation, demo, prior art (Herbie/Herbgrind/CADNA/egg), a 3-tier build
+  plan (`cargo accuracy`), weaknesses, and a try-it-today playbook — in
+  `numerical-accuracy-lens.md` (this branch).
+- **Next:** scale-test the recipe on a real numerical crate; prototype the
+  MIR→infix-DAG pretty-printer.
 
 ---
 
