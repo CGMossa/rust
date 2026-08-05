@@ -2595,11 +2595,17 @@ options! {
         "inlining threshold when the caller is a simple forwarding function (default: 30)"),
     inline_mir_hint_threshold: Option<usize> = (None, parse_opt_number, [TRACKED],
         "inlining threshold for functions with inline hint (default: 100)"),
+    inline_mir_history_depth_limit: Option<usize> = (None, parse_opt_number, [TRACKED],
+        "depth of nested inlining before MIR inlining stops considering new callees \
+        (default: 20)"),
     inline_mir_preserve_debug: Option<bool> = (None, parse_opt_bool, [TRACKED],
         "when MIR inlining, whether to preserve debug info for callee variables \
         (default: preserve for debuginfo != None, otherwise remove)"),
     inline_mir_threshold: Option<usize> = (None, parse_opt_number, [TRACKED],
         "a default MIR inlining threshold (default: 50)"),
+    inline_mir_top_down_depth_limit: Option<usize> = (None, parse_opt_number, [TRACKED],
+        "number of grown-callsite inlinings per top-level call before MIR inlining \
+        becomes conservative (default: 5)"),
     input_stats: bool = (false, parse_bool, [UNTRACKED],
         "print some statistics about AST and HIR (default: no)"),
     instrument_mcount: InstrumentMcount = (InstrumentMcount::Disabled, parse_instrument_mcount, [TRACKED],
