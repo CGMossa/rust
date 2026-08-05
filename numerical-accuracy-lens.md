@@ -426,7 +426,7 @@ it's the history limit that guards recursion.
 
 ```bash
 RUSTFLAGS="-Zcross-crate-inline-threshold=always" \
-  cargo +stage1 rustc --release -- \
+  cargo +rust-mir-lens rustc --release -- \
   -Zmir-opt-level=2 -Zinline-mir=yes \
   -Zinline-mir-threshold=100000 -Zinline-mir-hint-threshold=100000 \
   -Zinline-mir-history-depth-limit=64 -Zinline-mir-top-down-depth-limit=100000 \
@@ -434,9 +434,11 @@ RUSTFLAGS="-Zcross-crate-inline-threshold=always" \
   --emit=mir
 ```
 
-New vs §8.1: the two depth flags (need the patched rustc; `stage1` = build of
-`inline-mir-depth-limit-flags`) and `-Zinline-mir-preserve-debug=yes` —
-without it release builds drop callee debug info during inlining and the
+New vs §8.1: the two depth flags (need the patched rustc; toolchain
+`rust-mir-lens` is a snapshot of the `inline-mir-depth-limit-flags` build,
+cloned to `build/host/stage1-mir-lens` so later stage1 rebuilds can't clobber
+it — note `./x clean` still removes it) and `-Zinline-mir-preserve-debug=yes`
+— without it release builds drop callee debug info during inlining and the
 pretty-printer loses all source-level names (`_171` instead of `t`).
 
 ### 10.5 Tier-1 pretty-printer prototype (`mir-lens/mir_lens.py`)

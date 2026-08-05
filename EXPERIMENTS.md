@@ -23,6 +23,11 @@ _Last updated: 2026-08-06._
 - **Toolchain:** built std is linked as rustup toolchain `rust-unwind-hook`
   (`./x build library/std` then `rustup toolchain link rust-unwind-hook build/host/stage1`;
   re-link not needed after rebuilds — rustup points at the build dir).
+  **Caveat (2026-08-06):** because it points at the shared `build/host/stage1`
+  dir, an unrelated stage1 rebuild (thread 4) overwrote its contents — the
+  unwind-hook std is gone from that sysroot; rebuild from the branch to
+  restore. Lesson applied: experiment toolchains now get a snapshot dir +
+  dedicated link (see thread 4's `rust-mir-lens`).
 - **Status:** implemented on branch. Design notes in
   `unwind-completion-hook-plan.md`; usage/API in `INSTRUCTIONS.md` (both on that
   branch). Branch is ~7 months behind upstream — rebase before continuing.
@@ -72,9 +77,11 @@ _Last updated: 2026-08-06._
   `numerical-accuracy-lens.md` §10). Tier-1 pretty-printer prototyped:
   `mir-lens/mir_lens.py` (this branch; infix folding, debug names,
   provenance tags, `--fp-core`, `--scope`).
-- **Toolchain:** `stage1` rustup link → `build/host/stage1` (built from the
-  flags branch; also where old `rust-unwind-hook` link points — that
-  toolchain is now this build).
+- **Toolchain:** `rust-mir-lens` rustup link → `build/host/stage1-mir-lens`,
+  a copy-on-write snapshot of the flags-branch build. Dedicated link + own
+  directory so stage1 rebuilds can't repoint it (`./x clean` does remove it;
+  rebuild from the branch + re-snapshot to restore). The floating `stage1`
+  link also exists and tracks whatever was last built.
 - **Next:** historical-accuracy-bugs benchmark; "abstraction floor" (keep
   libm internals symbolic); upstream the two `-Z` flags.
 
