@@ -4,7 +4,7 @@ Running log of what we're hacking on in this checkout, so a fresh session
 knows the state without spelunking through branches. Tracked only on
 `claude-dev` (see the "Working with claude-dev" section in `CLAUDE.md`).
 
-_Last updated: 2026-07-18._
+_Last updated: 2026-08-06._
 
 ---
 
@@ -58,15 +58,25 @@ _Last updated: 2026-07-18._
   a reviewer can spot accuracy losses that live across function boundaries:
   divide-then-rescale round-trips, early rounding/casts, and above all
   cancellation in convergence *stopping criteria*.
-- **Status:** PoC verified 2026-07-18. Existing flags (`-Zinline-mir` +
-  `--emit=mir`, works on stable via `RUSTC_BOOTSTRAP=1`) already expose the
-  composed expressions with loop CFG and `scope (inlined …)` provenance
-  intact; the gap is readability (3-address form) + slicing. Full write-up —
-  motivation, demo, prior art (Herbie/Herbgrind/CADNA/egg), a 3-tier build
-  plan (`cargo accuracy`), weaknesses, and a try-it-today playbook — in
-  `numerical-accuracy-lens.md` (this branch).
-- **Next:** scale-test the recipe on a real numerical crate; prototype the
-  MIR→infix-DAG pretty-printer.
+- **Status:** PoC verified 2026-07-18; **scale-tested 2026-08-06** on
+  `nalgebra` + `interpn`. Verdict: the stable-flags recipe fails on real
+  crates — the MIR inliner's *hard-coded* depth limits
+  (`HISTORY_DEPTH_LIMIT=20`, `TOP_DOWN_DEPTH_LIMIT=5` in
+  `rustc_mir_transform/src/inline.rs`) hide exactly the numerically
+  interesting helpers (nalgebra's `delimit_subproblem` = the eigen
+  convergence criterion; interpn's `interp_weights`/`dot4`, despite
+  `#[inline]`). Fixed by **branch `inline-mir-depth-limit-flags`** (commit
+  `479a3376f1f`): adds `-Zinline-mir-history-depth-limit` +
+  `-Zinline-mir-top-down-depth-limit`. With a stage1 build of that branch the
+  criterion is fully visible (details + recipe v2 + flag guidance in
+  `numerical-accuracy-lens.md` §10). Tier-1 pretty-printer prototyped:
+  `mir-lens/mir_lens.py` (this branch; infix folding, debug names,
+  provenance tags, `--fp-core`, `--scope`).
+- **Toolchain:** `stage1` rustup link → `build/host/stage1` (built from the
+  flags branch; also where old `rust-unwind-hook` link points — that
+  toolchain is now this build).
+- **Next:** historical-accuracy-bugs benchmark; "abstraction floor" (keep
+  libm internals symbolic); upstream the two `-Z` flags.
 
 ---
 
