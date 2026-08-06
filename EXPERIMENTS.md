@@ -15,7 +15,12 @@ _Last updated: 2026-08-06._
   deleted). The stale tracked CLAUDE.md was dropped from the branch.
 - **Goal:** A global hook that runs **after** all Rust unwinding/drops complete,
   so an FFI function can take control of the program once Rust has cleaned up.
-  Primary use case: a diverging (`-> !`) FFI handoff at end of unwind.
+  Primary use case: a diverging (`-> !`) FFI handoff at end of unwind —
+  concretely, interop with **R's longjmp-based error handling**: `Rf_error`
+  longjmps, and longjmp across live Rust frames skips destructors, so the
+  hook lets a panic unwind fully (drops run) and *then* jump back into R.
+  This is why `was_caught == false` must mean "no further Rust code runs on
+  this thread" (guaranteed since the rethrow-invisible rework).
 - **API:** `std::panic::{set_unwind_hook, take_unwind_hook}` +
   `UnwindCompletionInfo { payload(), was_caught() }`. Library feature gate
   `unwind_completion_hook` (unstable, no compiler feature entry needed).
