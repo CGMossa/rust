@@ -128,17 +128,33 @@ _Last updated: 2026-08-06._
      the generic wildcard script are committed
      (`win-gnu-fs-validation/linkme-test/keep-linkme*.ld`). With
      `--whole-archive` + the script, all 4 elements survive gc in exe & DLL.
-  2. **Crate-side linkme patch (candidate upstream PR):** each element also
-     emits, on `all(windows, target_env = "gnu")`, a no-op constructor in
-     the KEEP'd `.ctors` list whose body volatile-reads the element — GC
-     mark chain: `.ctors` (KEEP) → anchor fn → element section. Validated:
-     patched linkme 0.3.37 keeps all referenced-member elements under
-     `--gc-sections` with NO special link flags (exe & DLL, both
-     toolchains). Cost per element: 8-byte ctor pointer + tiny fn + one
-     volatile byte-load at startup. Patch:
+  2. **Crate-side linkme patch (candidate upstream PR):** each element (and
+     the declaration's DUPCHECK) also emits, on
+     `all(windows, target_env = "gnu")`, a **data-only anchor**: a pointer
+     to it in the KEEP'd `.jcr` list — GC mark chain: `.jcr` (KEEP) →
+     relocation → element section. `.jcr` is never walked on MinGW
+     (`_Jv_RegisterClasses` is always null), so this is purely link-time —
+     **no startup code**, preserving linkme's compile-time-only contract
+     (a first `.ctors`-based version was rejected for exactly that reason:
+     ctors are runtime registration, linkme is compile-time). Cost per
+     element: one 8-byte pointer. Validated: patched linkme 0.3.37 keeps
+     all elements + dupcheck under `--gc-sections` with NO special link
+     flags (exe & DLL, both toolchains). Dead-end note for the same goal:
+     GNU ld ignores drectve `/INCLUDE`, and `#[used(linker)]` emits
+     nothing for MinGW. Patch:
      `win-gnu-fs-validation/linkme-test/linkme-gnu-gc-anchor.patch`
-     (against linkme-impl 0.3.37 `src/element.rs`; apply via registry copy
-     + `[patch.crates-io]`).
+     (against linkme-impl 0.3.37 `src/{element,declaration}.rs`; apply via
+     registry copy + `[patch.crates-io]`).
+  3. **Member-pull without `--whole-archive`: fat LTO.** `lto = "fat"` in
+     the release profile merges all Rust crates into one archive member,
+     so the C side's existing reference (e.g. `plugin_count`) pulls
+     everything — including registration-only crates. `#[used]` retention
+     holds at the compiler level through LTO. Validated: patch + fat LTO =
+     **all 4 elements + dupcheck present in every configuration** (exe &
+     DLL, gc on/off, both toolchains) with zero special linker flags.
+     (Thin LTO likely insufficient — keeps per-module objects.)
+  **Recommended stack for R/Rtools packages:** patched linkme + `lto =
+  "fat"`; no Makevars linker gymnastics needed.
   Dead ends tested: GNU ld does **not** honor `.drectve` `/INCLUDE` (nor
   `-include:`) — "corrupt .drectve" warning, symbol still stripped — so
   the MSVC retention mechanism cannot be ported; a drectve-emitting trick

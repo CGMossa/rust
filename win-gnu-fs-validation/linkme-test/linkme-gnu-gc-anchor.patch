@@ -1,35 +1,30 @@
---- a/impl/src/element.rs	2006-07-24 03:21:28
-+++ b/impl/src/element.rs	2026-08-06 15:04:52
-@@ -220,6 +220,28 @@
- 
+--- a/impl/src/element.rs
++++ b/impl/src/element.rs
+@@ -221,6 +221,23 @@
      let factory = quote_spanned!(input.start_span=> __new);
      let get = quote_spanned!(input.end_span=> #factory());
-+
+ 
 +    // On windows-gnu, GNU ld's --gc-sections has no retention mechanism for
 +    // the element's `.linkme_*$b` section: `#[used]` emits no `/INCLUDE`
 +    // linker directive for MinGW, and GNU ld would ignore one anyway. Root
-+    // the element through the KEEP'd `.ctors` list instead: a no-op
-+    // constructor whose body references the element, so the GC mark chain is
-+    // .ctors (KEEP) -> anchor fn .text -> element section.
++    // the element through the KEEP'd `.jcr` list instead: a pointer to the
++    // element placed there gives the GC the mark chain
++    // .jcr (KEEP) -> relocation -> element section. The .jcr (Java class
++    // registration) list is never walked on MinGW (_Jv_RegisterClasses is
++    // always null), so this is purely link-time data — no startup code runs.
 +    let gnu_gc_anchor = quote! {
 +        #[cfg(all(target_os = "windows", target_env = "gnu"))]
 +        const _: () = {
-+            unsafe extern "C" fn __linkme_gnu_keep() {
-+                unsafe {
-+                    #linkme_path::#private::ptr::read_volatile(
-+                        #linkme_path::#private::ptr::addr_of!(#ident).cast::<u8>(),
-+                    );
-+                }
-+            }
 +            #[used]
-+            #[unsafe(link_section = ".ctors")]
-+            static __LINKME_GNU_KEEP: unsafe extern "C" fn() = __linkme_gnu_keep;
++            #[unsafe(link_section = ".jcr")]
++            static __LINKME_GNU_KEEP: &#ty = &#ident;
 +        };
 +    };
- 
++
      quote! {
          #path ! {
-@@ -242,6 +264,8 @@
+             #![linkme_macro = #path]
+@@ -242,6 +259,8 @@
              };
          }
  
@@ -38,3 +33,23 @@
          #orig_item
      }
  }
+--- a/impl/src/declaration.rs
++++ b/impl/src/declaration.rs
+@@ -216,6 +216,17 @@
+             #[cfg_attr(any(target_os = "freebsd", target_os = "openbsd"), #unsafe_attr(#link_section_attr = #bsd_dupcheck))]
+             static DUPCHECK: #linkme_path::#private::isize = 1;
+ 
++            // windows-gnu: GNU ld --gc-sections would strip DUPCHECK's
++            // unreferenced `.linkm2_*$b` section (silently disabling
++            // duplicate detection). Root it via the KEEP'd, never-walked
++            // `.jcr` list — link-time data only, no startup code.
++            #[cfg(all(target_os = "windows", target_env = "gnu"))]
++            const _: () = {
++                #[used]
++                #[unsafe(link_section = ".jcr")]
++                static __LINKME_GNU_KEEP_DUPCHECK: &#linkme_path::#private::isize = &DUPCHECK;
++            };
++
+             #[cfg(not(any(
+                 target_os = "none",
+                 target_os = "linux",
