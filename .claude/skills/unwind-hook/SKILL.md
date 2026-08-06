@@ -12,7 +12,7 @@ Primary use case: a diverging (`-> !`) FFI handoff once Rust cleanup is done.
 
 Everything lives on branch **`unwind-completion-hook`** (renamed from
 `create_final_unwinding`; rebased onto upstream/main and then reworked
-2026-08-06 — truthful `was_caught`, lock-free invocation, Arc API; all 7 UI
+2026-08-06 — truthful `was_caught`, lock-free invocation, Arc API; all 8 UI
 tests passing). Design notes: `unwind-completion-hook-plan.md`; usage doc:
 `INSTRUCTIONS.md` (both tracked on that branch). Library feature gate:
 `unwind_completion_hook` (unstable, library-only — no compiler change).
@@ -51,14 +51,17 @@ Compile/run: `rustc +rust-unwind-hook file.rs` or `cargo +rust-unwind-hook …`.
 ## Semantics (verified on the reworked branch)
 
 - **`was_caught` is truthful**: `true` only for user-level `catch_unwind`
-  recoveries (program continues). `false` when the panic ends the thread's
-  normal execution — the unwind reached the root of a thread or `main`
-  (destructors ran; spawned threads still deliver the payload to `join()`),
-  or the panic aborts without unwinding (`panic=abort`, nounwind panics,
-  `immediate-abort`; destructors did NOT run). The runtime's own root
-  catches go through internal `CatchScope::ThreadRoot`
-  (`panic::catch_unwind_root` in `rt.rs`/`thread/lifecycle.rs`).
-  **A diverging FFI handoff should key off `!info.was_caught()`.**
+  recoveries (program continues). `false` at every non-recovering catch:
+  thread/`main` roots (destructors ran; spawned threads still deliver the
+  payload to `join()`), the runtime's suspend-and-rethrow catches
+  (`thread::scope` closure panics, TLS destructor cleanup — the unwind
+  continues afterwards), and non-unwinding aborts (`panic=abort`, nounwind
+  panics, `immediate-abort`; destructors did NOT run). All go through
+  internal `CatchScope::Runtime` via `panic::catch_unwind_runtime`.
+  One logical panic can fire the hook several times — `false` at each
+  non-recovering catch, then `true` if finally recovered — so **a diverging
+  FFI handoff keys off `!info.was_caught()` and belongs in programs that
+  don't intend to recover panics.**
 - Fires once per completed unwind segment: a payload re-thrown with
   `resume_unwind` through N catch layers fires the hook N times.
 - Inside the hook, `thread::panicking()` is `true`; calling
@@ -75,7 +78,7 @@ Compile/run: `rustc +rust-unwind-hook file.rs` or `cargo +rust-unwind-hook …`.
 
 ## Tests
 
-`tests/ui/panics/unwind-completion-hook-{catch,payload,take,diverge,abort,uncaught,thread}.rs`
+`tests/ui/panics/unwind-completion-hook-{catch,payload,take,diverge,abort,uncaught,thread,scope}.rs`
 ```bash
 ./x test tests/ui/panics --test-args unwind-completion-hook
 ```
@@ -86,9 +89,10 @@ Compile/run: `rustc +rust-unwind-hook file.rs` or `cargo +rust-unwind-hook …`.
   `CatchScope`, set/take, `invoke_unwind_hook*`,
   `catch_unwind_with_scope` panic-path call site (ordering comment there is
   load-bearing).
-- `library/std/src/panic.rs` — `UnwindCompletionInfo`, `catch_unwind_root`,
+- `library/std/src/panic.rs` — `UnwindCompletionInfo`, `catch_unwind_runtime`,
   re-exports, module docs.
-- `library/std/src/thread/lifecycle.rs` — thread-root catch sites.
+- `library/std/src/thread/{lifecycle,scoped}.rs`,
+  `library/std/src/sys/thread_local/os.rs` — runtime catch sites.
 - `library/std/src/rt.rs` — `__rust_invoke_unwind_hook` internal symbol.
 - `library/panic_abort/src/lib.rs` — abort-runtime call site.
 - Unstable-book page: `src/doc/unstable-book/src/library-features/unwind-completion-hook.md`.

@@ -42,7 +42,13 @@ _Last updated: 2026-08-06._
   calling. API is now Arc-symmetric: `set_unwind_hook(Arc<_>)`,
   `take_unwind_hook() -> Option<Arc<_>>` (round-trippable). Ordering
   invariant unchanged: hook runs outside the `#[rustc_nounwind]` catch
-  callback, before `panic_count::decrease()`.
+  callback, before `panic_count::decrease()`. Follow-up (`73e76e943bb`):
+  scope/TLS suspend-and-rethrow catches also report `false`
+  (`CatchScope::ThreadRoot` renamed to `Runtime`,
+  `panic::catch_unwind_runtime`); one logical panic fires the hook once per
+  catch, `false` until a user catch recovers it. 8 UI tests, 81/81 pass.
+  Open question for RFC time: should suspend-and-rethrow catches instead be
+  invisible to the hook (fire only at recovery/root/abort)?
 
 ## 2. Windows-GNU `function_sections`
 
