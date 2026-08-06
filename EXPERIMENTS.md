@@ -61,17 +61,29 @@ _Last updated: 2026-08-06._
 
 ## 2. Windows-GNU `function_sections`
 
-- **Branch:** `enable-windows-gnu-function-sections` (+ change currently in `git stash@{0}`)
+- **Branch:** `enable-windows-gnu-function-sections` — rebuilt 2026-08-06 as a
+  single commit (`650a46f1f84`) on upstream/main (7608eb7b07e).
 - **Goal:** Flip `function_sections: false → true` in
   `compiler/rustc_target/src/spec/base/windows_gnu.rs` to test whether
   `--gc-sections` now strips dead functions on PE/COFF (binutils #11539).
-- **Status:** one-line experiment, **stashed** as
-  `stash@{0}: "wip: windows_gnu function_sections experiment + backtrace bump"`.
-  The stash also carries a `library/backtrace` submodule pointer bump. Restore
-  with `git stash pop` from the branch you want it on. Branch also has a
-  `target-cpu-categories.md` + "target cpu categories" commit.
-- **Validation:** build a windows-gnu target and check binary size / that
-  `--gc-sections` drops unused functions. See `/bootstrap-config` scenario 5
+  Mechanism: rustc already passes `--gc-sections` to GNU ld for windows-gnu
+  executables (`GccLinker::gc_sections` in
+  `rustc_codegen_ssa/src/back/linker.rs`), but without function sections each
+  CGU is one monolithic `.text`, so ld has per-CGU granularity at best.
+- **Status:** the flip, previously only in `stash@{0}`, is now committed on
+  the branch (`./x check compiler/rustc_target` passes). `stash@{0}` is now
+  redundant (its tracked diff was only the flip — despite the message, no
+  backtrace bump was in it); safe to `git stash drop` after a look.
+  `stash@{1}` (old `create_final_unwinding` WIP) and `stash@{2}` (old master
+  WIP) also look like relics. The unrelated commits the branch used to carry
+  were rehomed: `target-cpu-categories.md` now lives on `claude-dev`; the
+  "minor doc improvement" commit already exists on `minor_edits`/`master`.
+  Old branch tip `fc4293febfa` (reflog) if anything was missed.
+- **Validation (still to do):** cross-build a windows-gnu target, compare
+  hello-world/binary sizes with and without the flip, and watch for link
+  errors. Risk areas: COFF section-count limits on huge CGUs (bigobj),
+  `.pdata`/`.xdata` unwind-info association under gc-sections, and old
+  binutils in users' MinGW toolchains. See `/bootstrap-config` scenario 5
   (cross-compiling) for the target build config.
 
 ## 3. Compiler-internals book
