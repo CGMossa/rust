@@ -29,16 +29,20 @@ _Last updated: 2026-08-06._
   swapped; hook ordering preserved). All 5 UI tests pass; API smoke-tested.
   Design notes in `unwind-completion-hook-plan.md`; usage/API in
   `INSTRUCTIONS.md` (both on that branch). See also the `unwind-hook` skill.
-- **Review findings (2026-08-06):** (a) `was_caught` reports `true` even for
-  panics that terminate a thread/main — the runtime's own `catch_unwind` in
-  `lang_start`/`thread::spawn` catches them; `false` only on non-unwinding
-  abort paths. Docs claim otherwise → fix docs or rethink the flag before
-  any RFC/PR. No test covers uncaught-unwind-to-thread-death. (b) Hook fires
-  once per catch layer under `resume_unwind` re-throws (undocumented).
-  (c) A diverging hook holds the RwLock read guard forever; cross-thread
-  set/take then blocks (document as intended). Mechanics are sound: hook
-  runs outside the `#[rustc_nounwind]` catch callback, before
-  `panic_count::decrease()`, so in-hook modification attempts panic→abort.
+- **Review findings (2026-08-06) — all addressed by the rework
+  (`5d258dbff77`):** (a) `was_caught` used to report `true` even for panics
+  that terminate a thread/main (runtime's own `catch_unwind` in
+  `lang_start`/`thread::spawn` caught them). Fixed: runtime root catches go
+  through internal `CatchScope::ThreadRoot` (`panic::catch_unwind_root`),
+  so thread-death unwinds now report `false` — verified live and by two new
+  UI tests (`-uncaught`, `-thread`); 80/80 in tests/ui/panics pass.
+  (b) Per-catch-layer firing under `resume_unwind` — now documented.
+  (c) Diverging hook wedging set/take — fixed: hook stored as
+  `Option<Arc<_>>`, invocation snapshots the Arc and drops the lock before
+  calling. API is now Arc-symmetric: `set_unwind_hook(Arc<_>)`,
+  `take_unwind_hook() -> Option<Arc<_>>` (round-trippable). Ordering
+  invariant unchanged: hook runs outside the `#[rustc_nounwind]` catch
+  callback, before `panic_count::decrease()`.
 
 ## 2. Windows-GNU `function_sections`
 

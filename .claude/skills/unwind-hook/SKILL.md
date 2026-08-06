@@ -11,7 +11,8 @@ just before `catch_unwind` returns `Err` — and, in non-unwinding abort paths
 Primary use case: a diverging (`-> !`) FFI handoff once Rust cleanup is done.
 
 Everything lives on branch **`unwind-completion-hook`** (renamed from
-`create_final_unwinding`; rebased onto upstream/main 2026-08-06, all 5 UI
+`create_final_unwinding`; rebased onto upstream/main and then reworked
+2026-08-06 — truthful `was_caught`, lock-free invocation, Arc API; all 7 UI
 tests passing). Design notes: `unwind-completion-hook-plan.md`; usage doc:
 `INSTRUCTIONS.md` (both tracked on that branch). Library feature gate:
 `unwind_completion_hook` (unstable, library-only — no compiler change).
@@ -35,36 +36,38 @@ Never link toolchains at the mutable `build/host/stage1` — snapshot first.
 ```rust
 #![feature(unwind_completion_hook)]
 use std::panic;
+use std::sync::Arc;
 
-panic::set_unwind_hook(Box::new(|info: &panic::UnwindCompletionInfo<'_>| {
+panic::set_unwind_hook(Arc::new(|info: &panic::UnwindCompletionInfo<'_>| {
     let payload: &(dyn std::any::Any + Send) = info.payload();
     let caught: bool = info.was_caught();
     // safe point: all Rust drops on this thread's unwind path have run
 }));
-let prev = panic::take_unwind_hook(); // restore default (no-op), returns old
+let prev = panic::take_unwind_hook(); // Option<Arc<_>>; re-registerable as-is
 ```
 
 Compile/run: `rustc +rust-unwind-hook file.rs` or `cargo +rust-unwind-hook …`.
 
-## Semantics (verified on the rebased branch)
+## Semantics (verified on the reworked branch)
 
-- Fires once per completed unwind segment: every `catch_unwind` that catches
-  a panic fires it — so a payload re-thrown with `resume_unwind` through N
-  catch layers fires the hook N times.
-- **`was_caught` is `true` even for "uncaught" panics** that kill a thread or
-  main, because the runtime's own `catch_unwind` (in `lang_start` /
-  `thread::spawn`) is what catches them. `false` occurs only on
-  non-unwinding paths: `panic=abort`, panics that can't unwind (nounwind /
-  double panic), `immediate-abort`. (Known doc/API wart — the docs' claim
-  that thread-termination reports `false` is wrong; see review notes in
-  EXPERIMENTS.md thread 1.)
+- **`was_caught` is truthful**: `true` only for user-level `catch_unwind`
+  recoveries (program continues). `false` when the panic ends the thread's
+  normal execution — the unwind reached the root of a thread or `main`
+  (destructors ran; spawned threads still deliver the payload to `join()`),
+  or the panic aborts without unwinding (`panic=abort`, nounwind panics,
+  `immediate-abort`; destructors did NOT run). The runtime's own root
+  catches go through internal `CatchScope::ThreadRoot`
+  (`panic::catch_unwind_root` in `rt.rs`/`thread/lifecycle.rs`).
+  **A diverging FFI handoff should key off `!info.was_caught()`.**
+- Fires once per completed unwind segment: a payload re-thrown with
+  `resume_unwind` through N catch layers fires the hook N times.
 - Inside the hook, `thread::panicking()` is `true`; calling
   `set_unwind_hook`/`take_unwind_hook` there panics (by design → nested
   panic → abort). The hook runs outside the `#[rustc_nounwind]` catch
   callback, before `panic_count::decrease()`.
-- A diverging hook holds the internal `RwLock` read guard forever; other
-  threads calling set/take will block indefinitely — fine for the intended
-  "hand off and never return" use, but don't diverge casually.
+- Invocation snapshots the `Arc` and releases the lock before calling: a
+  diverging hook does NOT block other threads from calling set/take, and a
+  panic caught inside the hook re-enters the invoke path safely.
 - `panic=abort`: destructors do NOT run, but the hook still fires before the
   abort (wired via `__rust_invoke_unwind_hook` in `std::rt`, called from
   `panic_abort`).
@@ -72,17 +75,20 @@ Compile/run: `rustc +rust-unwind-hook file.rs` or `cargo +rust-unwind-hook …`.
 
 ## Tests
 
-`tests/ui/panics/unwind-completion-hook-{catch,payload,take,diverge,abort}.rs`
+`tests/ui/panics/unwind-completion-hook-{catch,payload,take,diverge,abort,uncaught,thread}.rs`
 ```bash
 ./x test tests/ui/panics --test-args unwind-completion-hook
 ```
 
 ## Key files (for development)
 
-- `library/std/src/panicking.rs` — `UNWIND_HOOK` storage, set/take,
-  `invoke_unwind_hook*`, the `catch_unwind` panic-path call site (ordering
-  comment there is load-bearing).
-- `library/std/src/panic.rs` — `UnwindCompletionInfo`, re-exports, module docs.
+- `library/std/src/panicking.rs` — `UNWIND_HOOK` storage (`Option<Arc<_>>`),
+  `CatchScope`, set/take, `invoke_unwind_hook*`,
+  `catch_unwind_with_scope` panic-path call site (ordering comment there is
+  load-bearing).
+- `library/std/src/panic.rs` — `UnwindCompletionInfo`, `catch_unwind_root`,
+  re-exports, module docs.
+- `library/std/src/thread/lifecycle.rs` — thread-root catch sites.
 - `library/std/src/rt.rs` — `__rust_invoke_unwind_hook` internal symbol.
 - `library/panic_abort/src/lib.rs` — abort-runtime call site.
 - Unstable-book page: `src/doc/unstable-book/src/library-features/unwind-completion-hook.md`.
