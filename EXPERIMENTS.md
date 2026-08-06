@@ -134,6 +134,14 @@ reproducibility auditor, ULP golden tests, autodiff condition numbers) live
 in `numerics-diagnostics-ideas.md` — recorded 2026-08-06, deliberately not
 prioritized. Promote to a thread here if one gets picked up.
 
+## Reference research (kept on this branch)
+
+- `target-cpu-categories.md` — survey of default `target-cpu`/SIMD baselines
+  per architecture, x86-64 microarchitecture levels, cross-compilation
+  support, efficiency ranking (written 2026-04; rescued 2026-08-06 from the
+  `enable-windows-gnu-function-sections` branch, where it didn't belong).
+  Useful when picking `-C target-cpu` for numerical builds.
+
 ---
 
 ## How to update this file
