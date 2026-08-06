@@ -1,0 +1,40 @@
+--- a/impl/src/element.rs	2006-07-24 03:21:28
++++ b/impl/src/element.rs	2026-08-06 15:04:52
+@@ -220,6 +220,28 @@
+ 
+     let factory = quote_spanned!(input.start_span=> __new);
+     let get = quote_spanned!(input.end_span=> #factory());
++
++    // On windows-gnu, GNU ld's --gc-sections has no retention mechanism for
++    // the element's `.linkme_*$b` section: `#[used]` emits no `/INCLUDE`
++    // linker directive for MinGW, and GNU ld would ignore one anyway. Root
++    // the element through the KEEP'd `.ctors` list instead: a no-op
++    // constructor whose body references the element, so the GC mark chain is
++    // .ctors (KEEP) -> anchor fn .text -> element section.
++    let gnu_gc_anchor = quote! {
++        #[cfg(all(target_os = "windows", target_env = "gnu"))]
++        const _: () = {
++            unsafe extern "C" fn __linkme_gnu_keep() {
++                unsafe {
++                    #linkme_path::#private::ptr::read_volatile(
++                        #linkme_path::#private::ptr::addr_of!(#ident).cast::<u8>(),
++                    );
++                }
++            }
++            #[used]
++            #[unsafe(link_section = ".ctors")]
++            static __LINKME_GNU_KEEP: unsafe extern "C" fn() = __linkme_gnu_keep;
++        };
++    };
+ 
+     quote! {
+         #path ! {
+@@ -242,6 +264,8 @@
+             };
+         }
+ 
++        #gnu_gc_anchor
++
+         #orig_item
+     }
+ }

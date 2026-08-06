@@ -120,12 +120,31 @@ _Last updated: 2026-08-06._
      `pub #[no_mangle] #[used]` static in a custom section is gc'd), and
      COFF has no `SHF_GNU_RETAIN` equivalent for GNU ld.
   So the fs flip does **not** fix the linkme motivation — it makes the gc
-  case strictly worse. Practical guidance for R packages: don't pass
-  `--gc-sections` when linking Rust staticlibs using linkme on windows-gnu,
-  and reference (or whole-archive) every registering crate. Toolchain-side
-  fixes to explore: rust-lld MinGW driver (honors `/INCLUDE`?), LLVM
-  emitting drectve for MinGW when lld links, or linkme growing a
-  reference-chain scheme for windows-gnu.
+  case strictly worse. **Two validated fixes (2026-08-06):**
+  1. **User-side linker script:** `KEEP(*(SORT_BY_NAME(.linkme_*)))` etc.
+     inside `SECTIONS { … } INSERT AFTER .text;`, passed as
+     `-Wl,-T,keep-linkme.ld` (must be `-T`; implicit-script form fails, and
+     `INSERT AFTER .rdata` fails — `.text` works). Both the per-slice and
+     the generic wildcard script are committed
+     (`win-gnu-fs-validation/linkme-test/keep-linkme*.ld`). With
+     `--whole-archive` + the script, all 4 elements survive gc in exe & DLL.
+  2. **Crate-side linkme patch (candidate upstream PR):** each element also
+     emits, on `all(windows, target_env = "gnu")`, a no-op constructor in
+     the KEEP'd `.ctors` list whose body volatile-reads the element — GC
+     mark chain: `.ctors` (KEEP) → anchor fn → element section. Validated:
+     patched linkme 0.3.37 keeps all referenced-member elements under
+     `--gc-sections` with NO special link flags (exe & DLL, both
+     toolchains). Cost per element: 8-byte ctor pointer + tiny fn + one
+     volatile byte-load at startup. Patch:
+     `win-gnu-fs-validation/linkme-test/linkme-gnu-gc-anchor.patch`
+     (against linkme-impl 0.3.37 `src/element.rs`; apply via registry copy
+     + `[patch.crates-io]`).
+  Dead ends tested: GNU ld does **not** honor `.drectve` `/INCLUDE` (nor
+  `-include:`) — "corrupt .drectve" warning, symbol still stripped — so
+  the MSVC retention mechanism cannot be ported; a drectve-emitting trick
+  only helps with lld-MinGW (untested). Member-pull (P4) is fixable only
+  by `--whole-archive`/symbol references on every platform. Runtime
+  behavior still needs wine/Windows CI (static section analysis only).
 
 ## 3. Compiler-internals book
 
