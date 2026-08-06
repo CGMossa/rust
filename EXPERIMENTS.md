@@ -42,13 +42,17 @@ _Last updated: 2026-08-06._
   calling. API is now Arc-symmetric: `set_unwind_hook(Arc<_>)`,
   `take_unwind_hook() -> Option<Arc<_>>` (round-trippable). Ordering
   invariant unchanged: hook runs outside the `#[rustc_nounwind]` catch
-  callback, before `panic_count::decrease()`. Follow-up (`73e76e943bb`):
-  scope/TLS suspend-and-rethrow catches also report `false`
-  (`CatchScope::ThreadRoot` renamed to `Runtime`,
-  `panic::catch_unwind_runtime`); one logical panic fires the hook once per
-  catch, `false` until a user catch recovers it. 8 UI tests, 81/81 pass.
-  Open question for RFC time: should suspend-and-rethrow catches instead be
-  invisible to the hook (fire only at recovery/root/abort)?
+  callback, before `panic_count::decrease()`. Follow-up (`73e76e943bb`)
+  briefly made scope/TLS suspend-and-rethrow catches report `false`, but
+  the open question ("should they instead be invisible?") was decided
+  **invisible** (`d6f7b01a73d`, 2026-08-06): those catches don't fire the
+  hook at all, so it fires exactly once per completed unwind — `true` at a
+  user recovery, `false` at thread/main root or abort (`CatchScope` is now
+  three-way `User`/`ThreadRoot`/`Rethrow`; helpers `catch_unwind_root` +
+  `catch_unwind_rethrow`). Caveat: user-level `resume_unwind` is a new
+  unwind, so user catch-and-rethrow still fires per user catch. 8 UI
+  tests, 81/81 pass; semantics smoke-tested live on the refreshed
+  `rust-unwind-hook` snapshot.
 
 ## 2. Windows-GNU `function_sections`
 
