@@ -1,0 +1,3 @@
+[workspace]
+members = ["plugins", "capi", "extras"]
+resolver = "2"

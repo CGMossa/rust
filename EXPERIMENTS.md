@@ -103,6 +103,29 @@ _Last updated: 2026-08-06._
   wine on this Mac. Try `rust-lld` (MinGW driver) which may prune pdata
   properly and unlock the full win; measure a larger app; then decide if
   ~7% + no-regressions justifies proposing upstream.
+- **Original motivation (recovered 2026-08-06):** `linkme` distributed
+  slices failing in **staticlib outputs on windows-gnu** (the R/Rtools
+  ecosystem: R packages link Rust staticlibs into package DLLs with the
+  MinGW toolchain). Repro + matrix in
+  `win-gnu-fs-validation/linkme-test/` (elements P1–P4 = `0xAAAA0001..4`,
+  P4 registered in a crate nothing references). Findings (binutils 2.46.1):
+  1. **Member-pull loss (always, no gc needed):** an element in an archive
+     member with no inbound symbol reference (P4) silently never links —
+     exe and DLL alike. Fix: `--whole-archive` or a symbol reference.
+  2. **`--gc-sections` loss:** stock rustc keeps only some elements
+     (erratic — P1 survived, P2/P3 dropped); with the function_sections
+     flip **all** elements are collected. `--whole-archive` does NOT help.
+  3. **Root cause:** `#[used]` is a link-time no-op on windows-gnu — rustc/
+     LLVM emit **no `.drectve` `/INCLUDE`** for MinGW (microtest: even a
+     `pub #[no_mangle] #[used]` static in a custom section is gc'd), and
+     COFF has no `SHF_GNU_RETAIN` equivalent for GNU ld.
+  So the fs flip does **not** fix the linkme motivation — it makes the gc
+  case strictly worse. Practical guidance for R packages: don't pass
+  `--gc-sections` when linking Rust staticlibs using linkme on windows-gnu,
+  and reference (or whole-archive) every registering crate. Toolchain-side
+  fixes to explore: rust-lld MinGW driver (honors `/INCLUDE`?), LLVM
+  emitting drectve for MinGW when lld links, or linkme growing a
+  reference-chain scheme for windows-gnu.
 
 ## 3. Compiler-internals book
 
