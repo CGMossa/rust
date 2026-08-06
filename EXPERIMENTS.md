@@ -79,12 +79,30 @@ _Last updated: 2026-08-06._
   were rehomed: `target-cpu-categories.md` now lives on `claude-dev`; the
   "minor doc improvement" commit already exists on `minor_edits`/`master`.
   Old branch tip `fc4293febfa` (reflog) if anything was missed.
-- **Validation (still to do):** cross-build a windows-gnu target, compare
-  hello-world/binary sizes with and without the flip, and watch for link
-  errors. Risk areas: COFF section-count limits on huge CGUs (bigobj),
-  `.pdata`/`.xdata` unwind-info association under gc-sections, and old
-  binutils in users' MinGW toolchains. See `/bootstrap-config` scenario 5
-  (cross-compiling) for the target build config.
+- **Validation (done 2026-08-06, static only):** cross-built from macOS with
+  Homebrew mingw-w64 (GCC 16.1.0, **binutils 2.46.1**). Setup: bootstrap.toml
+  gained a `[target.x86_64-pc-windows-gnu]` cc/ar/linker section (kept);
+  build: `./x build library --target aarch64-apple-darwin,x86_64-pc-windows-gnu`
+  (58s — only rustc_target + deps rebuilt). Toolchain `rust-win-gnu-fs` →
+  `build/host/stage1-win-gnu-fs` snapshot. Harness in
+  `win-gnu-fs-validation/` (this branch): A = branch default (fs+gc),
+  B = branch + `-Wl,--no-gc-sections`, C = rustup nightly baseline.
+  **Results (hello.rs, `-O`, fully stripped):** A 815,104 B 870,912
+  C 877,056 bytes → **7.1% smaller than baseline**; `.text` 616,272 vs
+  651,536. All links succeed; gc collected 700 real dead std functions
+  (gimli/object internals, `Condvar::notify_*`, …).
+  **Correctness:** SEH function table intact — every collected function was
+  pdata-less; all kept panic/unwind-path functions have valid entries; no
+  dangling `.pdata`.
+  **Key limitation found:** GNU ld keeps the whole `.pdata` table and each
+  entry's reloc roots its function (no `.eh_frame`-style pruning for PE;
+  non-COMDAT `.pdata$x` isn't associative), so gc can only collect functions
+  *without* unwind info — 534 dead-but-kept `std::process`/`net`/`SystemTime`
+  functions carry pdata. That caps the win at ~6–7%, not Linux-style wins.
+- **Still to do:** runtime test (panic/unwind) needs wine or Windows CI — no
+  wine on this Mac. Try `rust-lld` (MinGW driver) which may prune pdata
+  properly and unlock the full win; measure a larger app; then decide if
+  ~7% + no-regressions justifies proposing upstream.
 
 ## 3. Compiler-internals book
 
