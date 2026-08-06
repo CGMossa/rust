@@ -87,6 +87,16 @@ _Last updated: 2026-08-06._
 
 ---
 
+## Parked ideas (not active work)
+
+Six sketched-out diagnostic-tooling ideas for scientific computing (NaN
+birth tracing, convergence observability, shadow-precision Miri,
+reproducibility auditor, ULP golden tests, autodiff condition numbers) live
+in `numerics-diagnostics-ideas.md` — recorded 2026-08-06, deliberately not
+prioritized. Promote to a thread here if one gets picked up.
+
+---
+
 ## How to update this file
 
 Add a thread when you start real work on something; drop it to a one-line
