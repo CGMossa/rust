@@ -10,7 +10,9 @@ _Last updated: 2026-08-06._
 
 ## 1. Unwind completion hook (std)
 
-- **Branch:** `create_final_unwinding` (superseded early cut: `add_final_unwinding`, empty)
+- **Branch:** `unwind-completion-hook` (renamed + rebased onto upstream/main
+  2026-08-06; old names `create_final_unwinding`/`add_final_unwinding`
+  deleted). The stale tracked CLAUDE.md was dropped from the branch.
 - **Goal:** A global hook that runs **after** all Rust unwinding/drops complete,
   so an FFI function can take control of the program once Rust has cleaned up.
   Primary use case: a diverging (`-> !`) FFI handoff at end of unwind.
@@ -20,17 +22,23 @@ _Last updated: 2026-08-06._
 - **Key files:** `library/std/src/{panic,panicking,rt}.rs`,
   `library/panic_abort/src/lib.rs`, unstable-book doc, 5 UI tests in
   `tests/ui/panics/unwind-completion-hook-*.rs`.
-- **Toolchain:** built std is linked as rustup toolchain `rust-unwind-hook`
-  (`./x build library/std` then `rustup toolchain link rust-unwind-hook build/host/stage1`;
-  re-link not needed after rebuilds — rustup points at the build dir).
-  **Caveat (2026-08-06):** because it points at the shared `build/host/stage1`
-  dir, an unrelated stage1 rebuild (thread 4) overwrote its contents — the
-  unwind-hook std is gone from that sysroot; rebuild from the branch to
-  restore. Lesson applied: experiment toolchains now get a snapshot dir +
-  dedicated link (see thread 4's `rust-mir-lens`).
-- **Status:** implemented on branch. Design notes in
-  `unwind-completion-hook-plan.md`; usage/API in `INSTRUCTIONS.md` (both on that
-  branch). Branch is ~7 months behind upstream — rebase before continuing.
+- **Toolchain:** `rust-unwind-hook` → `build/host/stage1-unwind-hook`
+  (snapshot, rebuilt 2026-08-06 on the new base; re-snapshot after rebuilds).
+- **Status:** rebased onto upstream/main (7608eb7b07e), conflict was only the
+  `catch_unwind` intrinsic call site (upstream now returns bool, branches
+  swapped; hook ordering preserved). All 5 UI tests pass; API smoke-tested.
+  Design notes in `unwind-completion-hook-plan.md`; usage/API in
+  `INSTRUCTIONS.md` (both on that branch). See also the `unwind-hook` skill.
+- **Review findings (2026-08-06):** (a) `was_caught` reports `true` even for
+  panics that terminate a thread/main — the runtime's own `catch_unwind` in
+  `lang_start`/`thread::spawn` catches them; `false` only on non-unwinding
+  abort paths. Docs claim otherwise → fix docs or rethink the flag before
+  any RFC/PR. No test covers uncaught-unwind-to-thread-death. (b) Hook fires
+  once per catch layer under `resume_unwind` re-throws (undocumented).
+  (c) A diverging hook holds the RwLock read guard forever; cross-thread
+  set/take then blocks (document as intended). Mechanics are sound: hook
+  runs outside the `#[rustc_nounwind]` catch callback, before
+  `panic_count::decrease()`, so in-hook modification attempts panic→abort.
 
 ## 2. Windows-GNU `function_sections`
 
