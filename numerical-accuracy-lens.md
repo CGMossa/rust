@@ -402,7 +402,7 @@ is hidden. No `-Z` flag controls these, unlike the cost thresholds.
 
 ### 10.3 Fix: two new -Z flags (branch `inline-mir-depth-limit-flags`)
 
-Commit `479a3376f1f` (~14 lines) adds `-Zinline-mir-history-depth-limit` and
+Commit `472f72b6297` (~14 lines) adds `-Zinline-mir-history-depth-limit` and
 `-Zinline-mir-top-down-depth-limit`, mirroring the `inline_mir_threshold`
 flag family, defaults unchanged. Empirical results with a stage1 build:
 

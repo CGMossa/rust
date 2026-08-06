@@ -71,7 +71,7 @@ _Last updated: 2026-08-06._
   interesting helpers (nalgebra's `delimit_subproblem` = the eigen
   convergence criterion; interpn's `interp_weights`/`dot4`, despite
   `#[inline]`). Fixed by **branch `inline-mir-depth-limit-flags`** (commit
-  `479a3376f1f`): adds `-Zinline-mir-history-depth-limit` +
+  `472f72b6297`): adds `-Zinline-mir-history-depth-limit` +
   `-Zinline-mir-top-down-depth-limit`. With a stage1 build of that branch the
   criterion is fully visible (details + recipe v2 + flag guidance in
   `numerical-accuracy-lens.md` §10). Tier-1 pretty-printer prototyped:
