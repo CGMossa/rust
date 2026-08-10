@@ -91,19 +91,26 @@ RUSTFLAGS="-Zcross-crate-inline-threshold=always" \
 python3 mir-lens/mir_lens.py <file>.mir --fn <substring>            # one function, full
 python3 mir-lens/mir_lens.py <file>.mir --fn <substring> --fp-core  # float dataflow only
 python3 mir-lens/mir_lens.py <file>.mir --fn <substring> --scope <callee-substring>
+python3 mir-lens/mir_lens.py <file>.mir --fn <substring> --floor libm --floor <callee>
 ```
 
 - `--fp-core` drops non-float statements and panic/fmt machinery (~100:1
-  noise reduction). Loops print as CFG blocks with `(loop head)` /
-  `[loop back-edge]` markers.
-- `--scope` keeps only statements whose inlining provenance matches — a
-  poor-man's slice. Provenance tags are printed as `← callee::path` with
-  generics stripped, so filter by bare names (`delimit_subproblem`, not
-  `SymmetricEigen::<f64>::delimit_subproblem`).
-- Known printer gaps: `Result`/`ControlFlow` plumbing leaks through; libm
-  internals (e.g. `floor` bit-twiddling) are shown inline rather than
-  re-abstracted; `--scope` misses statements whose result local belongs to a
-  consuming scope.
+  noise reduction) but keeps each surviving block's control flow, so loops
+  stay readable: `(loop head)` blocks show their exit condition even when
+  it's iterator plumbing, and `[loop back-edge]` gotos are kept.
+- `--scope` is a dataflow slice: statements whose inlining provenance
+  matches, **plus** statements consuming values that scope produced (so the
+  criterion that *uses* a scoped result is included). Provenance tags print
+  as `← callee::path` with generics stripped, so filter by bare names
+  (`delimit_subproblem`, not `SymmetricEigen::<f64>::delimit_subproblem`).
+- `--floor` (repeatable) is the abstraction floor: statements whose
+  provenance matches collapse into one `⟨callee: N stmts elided⟩` marker —
+  use it to keep libm/builtin internals symbolic (`--floor libm`) or to hide
+  an already-reviewed helper.
+- Known printer gaps: some `Result`/`ControlFlow` enum plumbing still shows
+  (full folding needs tier-2 expression-DAG reconstruction); `--floor`
+  elides by provenance, so values flowing out of a floored scope may print
+  as raw `_N` locals.
 
 ## Scoping the analysis
 

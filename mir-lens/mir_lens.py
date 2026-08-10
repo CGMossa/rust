@@ -37,7 +37,7 @@ TERM_SWITCH_RE = re.compile(
     r"^\s+switchInt\((?P<disc>.+?)\) -> \[(?P<arms>.+)\];$")
 SKIP_STMT_RE = re.compile(
     r"^\s+(StorageLive|StorageDead|Retag|PlaceMention|assume|nop|Deinit|"
-    r"ConstEvalCounter|FakeRead)\b")
+    r"ConstEvalCounter|FakeRead|// DBG:)")
 
 BINOPS = {
     "Add": "+", "Sub": "-", "Mul": "*", "Div": "/", "Rem": "%",
@@ -192,10 +192,18 @@ def is_float_ty(ty):
 
 
 class Renderer:
-    def __init__(self, fn, fp_core=False, scope_filter=None):
+    def __init__(self, fn, fp_core=False, scope_filter=None, floor=None):
         self.fn = fn
         self.fp_core = fp_core
         self.scope_filter = scope_filter
+        self.floor = floor or []
+        # locals declared in a scope matching --scope (for dataflow closure)
+        self.scope_locals = set()
+        if scope_filter:
+            for loc, sc in fn.decl_scope.items():
+                prov = sc.provenance() if sc else None
+                if prov and scope_filter in prov:
+                    self.scope_locals.add(loc)
         self.use_count = defaultdict(int)
         self.def_count = defaultdict(int)
         for stmts in fn.blocks.values():
@@ -322,7 +330,8 @@ class Renderer:
                     callee_short = re.sub(r"::<.*?>", "", callee)
                     callee_short = re.sub(r"<(.+?) as (.+?)>", r"\2", callee_short)
                     if PANIC_CALLEES.search(callee):
-                        lines.append((None, f"!panic: {callee_short}(…)", None, False))
+                        lines.append((None, f"!panic: {callee_short}(…)", None,
+                                      False, set()))
                         continue
                     exprs = [self.operand(a, env)
                              for a in split_args(cargs) if a.strip()]
@@ -336,32 +345,65 @@ class Renderer:
                     fp = any(self.is_fp(l) for l in d.leaves) or \
                         bool(re.search(r"\d\.\d|sqrt|fabs|abs\(", d.text))
                     lines.append((None, f"switch {d.text} -> {', '.join(arms)}",
-                                  None, fp))
+                                  None, fp, d.leaves))
                 elif kind == "goto":
                     loop = " [loop back-edge]" if payload in back_targets and \
                         fn.block_order.index(payload) <= fn.block_order.index(bb) else ""
-                    lines.append((None, f"goto {payload}{loop}", None, False))
+                    lines.append((None, f"goto {payload}{loop}", None, False, set()))
                 elif kind == "return":
-                    lines.append((None, "return", None, False))
+                    lines.append((None, "return", None, False, set()))
                 elif kind == "other_term":
-                    lines.append((None, payload.rstrip(";"), None, False))
+                    lines.append((None, payload.rstrip(";"), None, False, set()))
+            lines = self.apply_floor(lines)
             if self.scope_filter:
+                # dataflow closure: keep lines produced *in* the scope, and
+                # lines that *consume* a value the scope produced
                 lines = [l for l in lines
-                         if l[2] and self.scope_filter in l[2]]
+                         if (l[2] and self.scope_filter in l[2])
+                         or (l[4] & self.scope_locals)]
             elif self.fp_core:
-                # keep only float-dataflow lines; drop blocks that end up
-                # holding nothing but control flow
+                # keep float-dataflow lines; for blocks that keep any, also
+                # keep their control flow so loop structure stays readable,
+                # and always keep a loop head's branch condition
                 kept = [l for l in lines if l[3]]
-                ctl = [l for l in lines
-                       if l[1].startswith(("switch", "goto", "return")) and l[3]]
-                lines = kept if (kept and kept != ctl) or ctl else []
+                if kept:
+                    lines = [l for l in lines
+                             if l[3] or l[1].startswith(("switch", "goto", "return"))]
+                elif bb in back_targets:
+                    lines = [l for l in lines if l[1].startswith("switch")]
+                else:
+                    lines = []
             if not lines:
                 continue
             head = f"  {bb}" + (" (loop head)" if bb in back_targets else "") + ":"
             out.append(head)
-            for _, text, prov, _fp in lines:
+            for _, text, prov, _fp, _lv in lines:
                 tag = f"   ← {prov}" if prov else ""
                 out.append(f"    {text}{tag}")
+
+    def apply_floor(self, lines):
+        """Collapse runs of statements whose provenance matches a --floor
+        pattern into one elision marker: the 'abstraction floor'."""
+        if not self.floor:
+            return lines
+        out, run_prov, run_n = [], None, 0
+        def flush():
+            nonlocal run_prov, run_n
+            if run_n:
+                out.append((None, f"⟨{run_prov}: {run_n} stmts elided⟩",
+                            None, True, set()))
+            run_prov, run_n = None, 0
+        for l in lines:
+            prov = l[2]
+            if prov and any(f in prov for f in self.floor):
+                if run_prov not in (None, prov):
+                    flush()
+                run_prov, run_n = prov, run_n + 1
+            else:
+                flush()
+                out.append(l)
+        flush()
+        return out
 
     def emit_or_bind(self, place, expr, env, lines, call):
         """Single-use pure defs fold into their use; the rest print."""
@@ -380,11 +422,13 @@ class Renderer:
             env.pop(place, None)
             prov = self.provenance(place)
             fp = self.is_fp(place) or any(self.is_fp(l) for l in expr.leaves)
-            lines.append((place, f"{name} = {expr.text}", prov, fp))
+            lines.append((place, f"{name} = {expr.text}", prov, fp,
+                          expr.leaves | {place}))
         else:
             tgt = self.place(place, {})
             fp = any(self.is_fp(l) for l in tgt.leaves | expr.leaves)
-            lines.append((None, f"{tgt.text} = {expr.text}", None, fp))
+            lines.append((None, f"{tgt.text} = {expr.text}", None, fp,
+                          tgt.leaves | expr.leaves))
 
     def block_is_panic_path(self, bb):
         stmts = self.fn.blocks[bb]
@@ -438,8 +482,13 @@ def main():
     ap.add_argument("--fn", dest="only", help="substring filter on fn name")
     ap.add_argument("--fp-core", action="store_true",
                     help="elide non-float dataflow and panic machinery")
-    ap.add_argument("--scope", help="only statements whose inlining "
-                    "provenance contains this substring (poor-man's slice)")
+    ap.add_argument("--scope", help="statements whose inlining provenance "
+                    "contains this substring, plus statements consuming "
+                    "values that scope produced (dataflow closure)")
+    ap.add_argument("--floor", action="append", default=None, metavar="SUBSTR",
+                    help="abstraction floor: collapse statements whose "
+                    "provenance matches SUBSTR into one elision marker "
+                    "(repeatable; e.g. --floor libm --floor compiler_builtins)")
     args = ap.parse_args()
     text = open(args.mir_file).read()
     out = []
@@ -447,7 +496,8 @@ def main():
         if args.only and args.only not in m["name"]:
             continue
         fn = parse_fn(m, body)
-        Renderer(fn, fp_core=args.fp_core, scope_filter=args.scope).render(out)
+        Renderer(fn, fp_core=args.fp_core, scope_filter=args.scope,
+                 floor=args.floor).render(out)
         out.append("")
     print("\n".join(out))
 

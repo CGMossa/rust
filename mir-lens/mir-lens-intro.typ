@@ -464,13 +464,18 @@ crates; bring in generic heavyweights only for targeted questions.
 *Limits, honestly stated.* The lens is a *viewer*, not a verifier: it shows
 the composed computation and a human judges it — no error bounds are
 computed (pairing the view with tools that do estimate error is future
-work). The printer still leaks some `Result`/`ControlFlow` plumbing, shows
-libm internals (e.g. `floor`'s bit-twiddling) inline rather than
-re-abstracted, and `--scope` slicing can miss statements whose result
-belongs to a consuming scope. History depth must stay modest (64) on
-generic-heavy crates or compile time degrades. And what the lens shows is
-the program *as specified* — one rounding per MIR operation; the backend
-may still fuse or reorder within language rules.
+work). The printer keeps loop control flow under `--fp-core`, slices with
+dataflow closure under `--scope` (consuming statements included), and can
+collapse chosen callees behind an *abstraction floor* (`--floor libm`
+prints `⟨…: N stmts elided⟩` instead of bit-twiddling internals) — but some
+`Result`/`ControlFlow` enum plumbing still shows, pending full
+expression-DAG reconstruction. History depth must stay modest (64) on
+generic-heavy crates or compile time degrades; lifting that properly means
+teaching the inliner to detect polymorphic recursion specifically, rather
+than bounding all depth — a candidate rustc follow-up. And what the lens
+shows is the program *as specified* — one rounding per MIR operation. For
+Rust this is close to what runs: rustc enables no fast-math reassociation,
+and fused multiply-adds occur only where the source wrote `mul_add`.
 
 *Status.* The rustc patch is a \~14-line, defaults-unchanged flag addition —
 a candidate for upstreaming so the lens runs on stock nightlies. The

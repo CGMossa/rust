@@ -118,8 +118,19 @@ _Last updated: 2026-08-07._
   directory so stage1 rebuilds can't repoint it (`./x clean` does remove it;
   rebuild from the branch + re-snapshot to restore). The floating `stage1`
   link also exists and tracks whatever was last built.
-- **Next:** historical-accuracy-bugs benchmark; "abstraction floor" (keep
-  libm internals symbolic); upstream the two `-Z` flags.
+- **Printer v2 (2026-08-07):** `--fp-core` now preserves loop structure
+  (heads show exit conditions, back-edge gotos kept); `--scope` slices with
+  dataflow closure (consuming statements included); new repeatable
+  `--floor <substring>` implements the abstraction floor (collapses matching
+  provenance runs into `⟨callee: N stmts elided⟩`); `// DBG:` comment lines
+  filtered. Validated on the lens-demo crate in all modes.
+- **Next:** historical-accuracy-bugs benchmark; upstream the two `-Z` flags;
+  rustc-side follow-up idea — detect *polymorphic recursion* in the inliner
+  (same DefId, growing substs) instead of bounding all depth, so history
+  limits could be lifted on generic-heavy crates; tier-2 printer
+  (expression-DAG reconstruction to fold enum plumbing); verifier track
+  (error bounds / condition numbers) parked in
+  `numerics-diagnostics-ideas.md`.
 
 ---
 
