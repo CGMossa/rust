@@ -28,6 +28,24 @@ root, claude-dev). Pretty-printer: `mir-lens/mir_lens.py`.
   Never point the link at the mutable `build/host/stage1` — snapshot first
   (other experiments rebuild that directory).
 
+### Availability / pinning (verified 2026-08-07)
+
+- The link is **machine-local**: rustup can run it (`cargo +rust-mir-lens`,
+  `rustup run rust-mir-lens`) but not download it. Another machine rebuilds
+  the branch and links its own snapshot (commands above).
+- A project can pin it with `rust-toolchain.toml`:
+  ```toml
+  [toolchain]
+  channel = "rust-mir-lens"
+  ```
+  Custom linked names are valid channels; `rustup which rustc` then resolves
+  to the snapshot, and since stage1 ships no cargo, rustup's shim silently
+  falls back to the default toolchain's cargo — exactly what the recipe
+  expects.
+- Pinning only makes the flags *available* — the lens is still the explicit
+  recipe invocation below. Do NOT bake the recipe's RUSTFLAGS into a
+  project's `.cargo/config.toml`; they would distort every normal build.
+
 ## Recipe
 
 From the target crate's directory (a scratch wrapper crate with one thin
