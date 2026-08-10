@@ -4,7 +4,7 @@ Running log of what we're hacking on in this checkout, so a fresh session
 knows the state without spelunking through branches. Tracked only on
 `claude-dev` (see the "Working with claude-dev" section in `CLAUDE.md`).
 
-_Last updated: 2026-08-06._
+_Last updated: 2026-08-07._
 
 ---
 
@@ -59,146 +59,29 @@ _Last updated: 2026-08-06._
   tests, 81/81 pass; semantics smoke-tested live on the refreshed
   `rust-unwind-hook` snapshot.
 
-## 2. Windows-GNU `function_sections`
+## 2. Windows-GNU `function_sections` — WRAPPED (2026-08-07)
 
-- **Branch:** `enable-windows-gnu-function-sections` — rebuilt 2026-08-06 as a
-  single commit (`650a46f1f84`) on upstream/main (7608eb7b07e).
-- **Goal:** Flip `function_sections: false → true` in
-  `compiler/rustc_target/src/spec/base/windows_gnu.rs` to test whether
-  `--gc-sections` now strips dead functions on PE/COFF (binutils #11539).
-  Mechanism: rustc already passes `--gc-sections` to GNU ld for windows-gnu
-  executables (`GccLinker::gc_sections` in
-  `rustc_codegen_ssa/src/back/linker.rs`), but without function sections each
-  CGU is one monolithic `.text`, so ld has per-CGU granularity at best.
-- **Status:** the flip, previously only in `stash@{0}`, is now committed on
-  the branch (`./x check compiler/rustc_target` passes). `stash@{0}` is now
-  redundant (its tracked diff was only the flip — despite the message, no
-  backtrace bump was in it); safe to `git stash drop` after a look.
-  `stash@{1}` (old `create_final_unwinding` WIP) and `stash@{2}` (old master
-  WIP) also look like relics. The unrelated commits the branch used to carry
-  were rehomed: `target-cpu-categories.md` now lives on `claude-dev`; the
-  "minor doc improvement" commit already exists on `minor_edits`/`master`.
-  Old branch tip `fc4293febfa` (reflog) if anything was missed.
-- **Validation (done 2026-08-06, static only):** cross-built from macOS with
-  Homebrew mingw-w64 (GCC 16.1.0, **binutils 2.46.1**). Setup: bootstrap.toml
-  gained a `[target.x86_64-pc-windows-gnu]` cc/ar/linker section (kept);
-  build: `./x build library --target aarch64-apple-darwin,x86_64-pc-windows-gnu`
-  (58s — only rustc_target + deps rebuilt). Toolchain `rust-win-gnu-fs` →
-  `build/host/stage1-win-gnu-fs` snapshot. Harness in
-  `win-gnu-fs-validation/` (this branch): A = branch default (fs+gc),
-  B = branch + `-Wl,--no-gc-sections`, C = rustup nightly baseline.
-  **Results (hello.rs, `-O`, fully stripped):** A 815,104 B 870,912
-  C 877,056 bytes → **7.1% smaller than baseline**; `.text` 616,272 vs
-  651,536. All links succeed; gc collected 700 real dead std functions
-  (gimli/object internals, `Condvar::notify_*`, …).
-  **Correctness:** SEH function table intact — every collected function was
-  pdata-less; all kept panic/unwind-path functions have valid entries; no
-  dangling `.pdata`.
-  **Key limitation found:** GNU ld keeps the whole `.pdata` table and each
-  entry's reloc roots its function (no `.eh_frame`-style pruning for PE;
-  non-COMDAT `.pdata$x` isn't associative), so gc can only collect functions
-  *without* unwind info — 534 dead-but-kept `std::process`/`net`/`SystemTime`
-  functions carry pdata. That caps the win at ~6–7%, not Linux-style wins.
-- **rust-lld experiment (2026-08-07):** linked the same artifacts with
-  rust-lld's MinGW driver (LLD 22.1.8 from the nightly dist; Homebrew's gcc
-  has `--with-ld` hardwired, so a replay driver
-  `scratchpad/lld-shim/lldgcc.py` captures the `gcc -###` collect2 line,
-  strips `-plugin*`, and re-executes it with `rust-lld -flavor gnu`).
-  Results (hello.rs, fully stripped):
-  | linker + std | fullstrip | .text | #pdata funcs |
-  |---|---|---|---|
-  | GNU ld + fs (gc) | 815,104 | 616,272 | 1720 |
-  | **lld + fs (gc)** | **276,992** | **213,984** | **471** |
-  | lld + nightly std (gc) | 878,080 | 651,632 | 1717 |
-  **The flip is the prerequisite for lld's win**: on COFF,
-  `function_sections` emits each function as a COMDAT, and lld's gc
-  collects dead COMDATs *with* their associative `.pdata$`/`.xdata$`
-  (correct unwind pruning — the machinery GNU ld lacks). fs+lld =
-  **68% smaller** hello vs today's default; lld+monolithic std = no win.
-  lld also never collects regular (non-COMDAT) sections, so linkme-style
-  section magic is **safe under lld by construction** (all elements +
-  dupcheck survive, patched or not; drectve `/INCLUDE` moot). Note: lld
-  truncates PE section names to 8 bytes (`.linkme_PLUGINS` → `.linkme_`) —
-  harmless (linkme reads via marker symbols), but section-name-based
-  inspection must account for it.
-- **Plain-exe linkme regression test (unpatched linkme 0.3.37, cargo bin,
-  elements in bin + dep crate):** today's world (nightly + GNU ld, rustc
-  passes `--gc-sections` for windows-gnu exes) **already silently loses
-  the bin crate's elements** — slice len 1 of 3, no diagnostics. The fs
-  flip makes it total (0 of 3, dupcheck gone). lld keeps all 3 with either
-  std. So linkme on windows-gnu is broken *today*; the flip changes
-  silent-partial to deterministic-empty; lld (or the .jcr patch) fixes it.
-- **Upstream decision (2026-08-07): worth proposing — as a two-step
-  story.** (1) The flip itself: removes the 2014 `FIXME(#13846)` (binutils
-  bug long fixed), aligns windows-gnu with every other major target
-  (msvc/linux already default `function_sections: true`), gives ~7% with
-  GNU ld, no link/unwind-table regressions found; tier-1 CI would provide
-  the missing runtime validation. (2) Its real payoff is enabling a later
-  rust-lld default for windows-gnu (rust-lld already ships): fs+lld =
-  ~68% smaller binaries *and* fixes the `#[used]`-section-magic ecosystem
-  (linkme et al., silently broken today). PR must disclose the GNU-ld
-  linkme interaction (partial→total loss) and point at the crate-side fix
-  (`linkme-gnu-gc-anchor.patch`); i686-pc-windows-gnu shares the base spec
-  and is untested locally — flag for CI. Remaining before filing: run a
-  windows-gnu CI/wine runtime pass.
-- **Original motivation (recovered 2026-08-06):** `linkme` distributed
-  slices failing in **staticlib outputs on windows-gnu** (the R/Rtools
-  ecosystem: R packages link Rust staticlibs into package DLLs with the
-  MinGW toolchain). Repro + matrix in
-  `win-gnu-fs-validation/linkme-test/` (elements P1–P4 = `0xAAAA0001..4`,
-  P4 registered in a crate nothing references). Findings (binutils 2.46.1):
-  1. **Member-pull loss (always, no gc needed):** an element in an archive
-     member with no inbound symbol reference (P4) silently never links —
-     exe and DLL alike. Fix: `--whole-archive` or a symbol reference.
-  2. **`--gc-sections` loss:** stock rustc keeps only some elements
-     (erratic — P1 survived, P2/P3 dropped); with the function_sections
-     flip **all** elements are collected. `--whole-archive` does NOT help.
-  3. **Root cause:** `#[used]` is a link-time no-op on windows-gnu — rustc/
-     LLVM emit **no `.drectve` `/INCLUDE`** for MinGW (microtest: even a
-     `pub #[no_mangle] #[used]` static in a custom section is gc'd), and
-     COFF has no `SHF_GNU_RETAIN` equivalent for GNU ld.
-  So the fs flip does **not** fix the linkme motivation — it makes the gc
-  case strictly worse. **Two validated fixes (2026-08-06):**
-  1. **User-side linker script:** `KEEP(*(SORT_BY_NAME(.linkme_*)))` etc.
-     inside `SECTIONS { … } INSERT AFTER .text;`, passed as
-     `-Wl,-T,keep-linkme.ld` (must be `-T`; implicit-script form fails, and
-     `INSERT AFTER .rdata` fails — `.text` works). Both the per-slice and
-     the generic wildcard script are committed
-     (`win-gnu-fs-validation/linkme-test/keep-linkme*.ld`). With
-     `--whole-archive` + the script, all 4 elements survive gc in exe & DLL.
-  2. **Crate-side linkme patch (candidate upstream PR):** each element (and
-     the declaration's DUPCHECK) also emits, on
-     `all(windows, target_env = "gnu")`, a **data-only anchor**: a pointer
-     to it in the KEEP'd `.jcr` list — GC mark chain: `.jcr` (KEEP) →
-     relocation → element section. `.jcr` is never walked on MinGW
-     (`_Jv_RegisterClasses` is always null), so this is purely link-time —
-     **no startup code**, preserving linkme's compile-time-only contract
-     (a first `.ctors`-based version was rejected for exactly that reason:
-     ctors are runtime registration, linkme is compile-time). Cost per
-     element: one 8-byte pointer. Validated: patched linkme 0.3.37 keeps
-     all elements + dupcheck under `--gc-sections` with NO special link
-     flags (exe & DLL, both toolchains). Dead-end note for the same goal:
-     GNU ld ignores drectve `/INCLUDE`, and `#[used(linker)]` emits
-     nothing for MinGW. Patch:
-     `win-gnu-fs-validation/linkme-test/linkme-gnu-gc-anchor.patch`
-     (against linkme-impl 0.3.37 `src/{element,declaration}.rs`; apply via
-     registry copy + `[patch.crates-io]`).
-  3. **Member-pull without `--whole-archive`: fat LTO.** `lto = "fat"` in
-     the release profile merges all Rust crates into one archive member,
-     so the C side's existing reference (e.g. `plugin_count`) pulls
-     everything — including registration-only crates. `#[used]` retention
-     holds at the compiler level through LTO. Validated: patch + fat LTO =
-     **all 4 elements + dupcheck present in every configuration** (exe &
-     DLL, gc on/off, both toolchains) with zero special linker flags.
-     (Thin LTO likely insufficient — keeps per-module objects.)
-  **Recommended stack for R/Rtools packages:** patched linkme + `lto =
-  "fat"`; no Makevars linker gymnastics needed.
-  Dead ends tested: GNU ld does **not** honor `.drectve` `/INCLUDE` (nor
-  `-include:`) — "corrupt .drectve" warning, symbol still stripped — so
-  the MSVC retention mechanism cannot be ported; a drectve-emitting trick
-  only helps with lld-MinGW (untested). Member-pull (P4) is fixable only
-  by `--whole-archive`/symbol references on every platform. Runtime
-  behavior still needs wine/Windows CI (static section analysis only).
+- **Contribution-ready branch:** `enable-windows-gnu-function-sections` @
+  `cb3226e7f1f` — single +6/−2 commit flipping the base-spec default, with
+  a data-carrying commit message. Filing gated only on a Windows runtime
+  pass (CI or wine); local validation was static-only.
+- **Full write-up (lines, data, considerations, repro):**
+  `win-gnu-fs-validation/REPORT.md` on this branch. Headline yields:
+  **−7%** with GNU ld (capped by pdata rooting), **−68%** with rust-lld
+  (fs is the prerequisite for lld's PE gc). linkme findings + two
+  validated fixes (`.jcr` anchor crate patch — upstream candidate, PR
+  draft ready — and KEEP linker script) live in
+  `win-gnu-fs-validation/linkme-test/`; linkme is silently broken on
+  windows-gnu *today* (plain release bin keeps 1 of 3 elements).
+- **Original motivation:** `linkme` failing in staticlib outputs on
+  windows-gnu (R/Rtools: Rust staticlib linked into package DLLs).
+  Recommended stack there: patched linkme + `lto = "fat"`.
+- **Toolchain:** `rust-win-gnu-fs` → `build/host/stage1-win-gnu-fs`
+  snapshot; `bootstrap.toml` keeps the `[target.x86_64-pc-windows-gnu]`
+  cc/ar/linker block; `brew mingw-w64` (GCC 16.1, binutils 2.46.1).
+- **Next actions when picked up:** (1) file the linkme PR, (2) Windows CI
+  runtime pass then the rustc PR, (3) open the rust-lld-for-windows-gnu
+  conversation. Details in REPORT.md §Next actions.
 
 ## 3. Compiler-internals book
 
