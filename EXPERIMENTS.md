@@ -99,10 +99,48 @@ _Last updated: 2026-08-06._
   non-COMDAT `.pdata$x` isn't associative), so gc can only collect functions
   *without* unwind info — 534 dead-but-kept `std::process`/`net`/`SystemTime`
   functions carry pdata. That caps the win at ~6–7%, not Linux-style wins.
-- **Still to do:** runtime test (panic/unwind) needs wine or Windows CI — no
-  wine on this Mac. Try `rust-lld` (MinGW driver) which may prune pdata
-  properly and unlock the full win; measure a larger app; then decide if
-  ~7% + no-regressions justifies proposing upstream.
+- **rust-lld experiment (2026-08-07):** linked the same artifacts with
+  rust-lld's MinGW driver (LLD 22.1.8 from the nightly dist; Homebrew's gcc
+  has `--with-ld` hardwired, so a replay driver
+  `scratchpad/lld-shim/lldgcc.py` captures the `gcc -###` collect2 line,
+  strips `-plugin*`, and re-executes it with `rust-lld -flavor gnu`).
+  Results (hello.rs, fully stripped):
+  | linker + std | fullstrip | .text | #pdata funcs |
+  |---|---|---|---|
+  | GNU ld + fs (gc) | 815,104 | 616,272 | 1720 |
+  | **lld + fs (gc)** | **276,992** | **213,984** | **471** |
+  | lld + nightly std (gc) | 878,080 | 651,632 | 1717 |
+  **The flip is the prerequisite for lld's win**: on COFF,
+  `function_sections` emits each function as a COMDAT, and lld's gc
+  collects dead COMDATs *with* their associative `.pdata$`/`.xdata$`
+  (correct unwind pruning — the machinery GNU ld lacks). fs+lld =
+  **68% smaller** hello vs today's default; lld+monolithic std = no win.
+  lld also never collects regular (non-COMDAT) sections, so linkme-style
+  section magic is **safe under lld by construction** (all elements +
+  dupcheck survive, patched or not; drectve `/INCLUDE` moot). Note: lld
+  truncates PE section names to 8 bytes (`.linkme_PLUGINS` → `.linkme_`) —
+  harmless (linkme reads via marker symbols), but section-name-based
+  inspection must account for it.
+- **Plain-exe linkme regression test (unpatched linkme 0.3.37, cargo bin,
+  elements in bin + dep crate):** today's world (nightly + GNU ld, rustc
+  passes `--gc-sections` for windows-gnu exes) **already silently loses
+  the bin crate's elements** — slice len 1 of 3, no diagnostics. The fs
+  flip makes it total (0 of 3, dupcheck gone). lld keeps all 3 with either
+  std. So linkme on windows-gnu is broken *today*; the flip changes
+  silent-partial to deterministic-empty; lld (or the .jcr patch) fixes it.
+- **Upstream decision (2026-08-07): worth proposing — as a two-step
+  story.** (1) The flip itself: removes the 2014 `FIXME(#13846)` (binutils
+  bug long fixed), aligns windows-gnu with every other major target
+  (msvc/linux already default `function_sections: true`), gives ~7% with
+  GNU ld, no link/unwind-table regressions found; tier-1 CI would provide
+  the missing runtime validation. (2) Its real payoff is enabling a later
+  rust-lld default for windows-gnu (rust-lld already ships): fs+lld =
+  ~68% smaller binaries *and* fixes the `#[used]`-section-magic ecosystem
+  (linkme et al., silently broken today). PR must disclose the GNU-ld
+  linkme interaction (partial→total loss) and point at the crate-side fix
+  (`linkme-gnu-gc-anchor.patch`); i686-pc-windows-gnu shares the base spec
+  and is untested locally — flag for CI. Remaining before filing: run a
+  windows-gnu CI/wine runtime pass.
 - **Original motivation (recovered 2026-08-06):** `linkme` distributed
   slices failing in **staticlib outputs on windows-gnu** (the R/Rtools
   ecosystem: R packages link Rust staticlibs into package DLLs with the

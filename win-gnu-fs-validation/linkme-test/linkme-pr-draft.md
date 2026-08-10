@@ -13,6 +13,15 @@ This hits real projects because staticlib outputs are linked by an external
 GNU toolchain (MinGW / R's Rtools), where `--gc-sections` is a common
 size-reduction flag the Rust build never sees.
 
+It is not limited to staticlibs: **plain cargo-built windows-gnu binaries are
+affected today**, because rustc itself passes `--gc-sections` to GNU ld for
+executables. A release-mode bin crate with three elements (two in the bin,
+one in a dep) links with a slice of length **1** — the bin crate's own
+elements are silently collected (verified with rustc 1.99 nightly, GNU ld
+2.46.1). Linking the same program with rust-lld's MinGW driver keeps all
+three (lld's gc only collects COMDATs, so these sections are safe there by
+construction).
+
 Root cause: `#[used]` has **no link-level retention semantics on windows-gnu**.
 
 - LLVM emits no `.drectve /INCLUDE:` directive for `llvm.used` on MinGW
