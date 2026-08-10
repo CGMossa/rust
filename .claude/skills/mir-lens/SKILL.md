@@ -126,6 +126,20 @@ library under review, with one thin wrapper per computation of interest
 crates (e.g. interpn) over heavyweight generic stacks (nalgebra) for
 exploratory passes; bring in the big ones only for targeted questions.
 
+For a **permanent home inside the reviewed repo**, a library-type example is
+the scratch crate's equivalent: `examples/mir_lens.rs` plus
+`[[example]] name = "mir_lens"` / `crate-type = ["lib"]` in Cargo.toml (a lib
+target makes every `pub fn` a codegen root; a bin would dead-code them
+without a `main` calling each with runtime args). Invoke the recipe as
+`cargo +rust-mir-lens rustc --release --example mir_lens -- <flags>`; the
+.mir lands in `<target-dir>/release/examples/`, and `cargo test` builds
+examples so the wrappers track the crate API. Do **not** house the wrappers
+in a feature-gated module of the library itself: that makes the whole
+library the leaf crate and the inline flags then chew every function in it —
+on numsense (pulls faer + nalgebra) that build was killed after 25+ min,
+vs ~2 s as an example. Working reference: numsense's `just lens`
+(verified 2026-08-10).
+
 ## What to look for in the output
 
 - Subtractions of near-equal quantities in loop-head criteria (cancellation
