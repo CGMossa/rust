@@ -145,6 +145,15 @@ collects non-COMDAT sections) fixes it entirely.
    fails). Works without touching linkme.
 3. **`lto = "fat"`** replaces `--whole-archive` for the member-pull case.
 
+LTO independence (verified with all three settings, GNU ld + gc): the `.jcr`
+anchor works identically under `lto = false / "thin" / "fat"` — it is pure
+link-time data, and when LTO is on, `#[used]` (llvm.used) is what protects
+the anchors through LTO internalization. LTO matters **only** for
+member-pull, and there it must specifically be **fat**: thin keeps per-crate
+object members (~184 in the test archive), so an unreferenced registering
+crate is still never loaded — the anchor inside it can't help. No
+registration-only crates → no LTO requirement at all.
+
 Recommended stack for R/Rtools packages (Rust staticlib into package DLL):
 patched linkme + `lto = "fat"` — no Makevars linker gymnastics.
 
