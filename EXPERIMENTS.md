@@ -127,10 +127,20 @@ _Last updated: 2026-08-07._
 - **Next:** historical-accuracy-bugs benchmark; upstream the two `-Z` flags;
   rustc-side follow-up idea — detect *polymorphic recursion* in the inliner
   (same DefId, growing substs) instead of bounding all depth, so history
-  limits could be lifted on generic-heavy crates; tier-2 printer
-  (expression-DAG reconstruction to fold enum plumbing); verifier track
+  limits could be lifted on generic-heavy crates; verifier track
   (error bounds / condition numbers) parked in
   `numerics-diagnostics-ideas.md`.
+- **Tier-2 target identified (2026-08-07):** build `cargo lens` as a rustc
+  driver on **`rustc_public`** (in-tree, né `stable_mir`; Kani's API).
+  Verified in this checkout: `Body` exposes `var_debug_info` (names),
+  `source_scopes.{inlined, inlined_parent_scope}` (the provenance chain the
+  Python regex-reconstructs), spans, and structured statements — so the
+  port removes text parsing, gives exact types + clickable file:line, and
+  makes enum-plumbing folding tractable. The `-Z` inliner flags stay
+  load-bearing (driver reads post-opt bodies). `mir_lens.py` (456 lines,
+  semantics now settled) is the spec to transliterate; nightly-pinned like
+  Kani. Nothing on crates.io parses `--emit=mir` text — all serious MIR
+  consumers (Kani, miri, charon, mir-json) enter through the compiler.
 
 ---
 
