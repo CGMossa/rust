@@ -5,6 +5,12 @@ description: Run the numerical-accuracy "inlined-calculation lens" on a crate - 
 
 # The inlined-calculation lens
 
+_A portable copy of this skill is installed at
+`~/.claude/skills/mir-lens/SKILL.md` (absolute paths), so `/mir-lens` works
+from any project directory on this machine — keep the two in sync when
+editing. This project copy only exists on `claude-dev` or after the AI-files
+dump on a feature branch._
+
 Shows the *composed* floating-point computation of a program — every call
 flattened into its caller (post-inlining, post-monomorphization MIR), loops
 kept as loops — so a reviewer can spot accuracy hazards that live across
