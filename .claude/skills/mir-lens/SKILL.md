@@ -24,10 +24,18 @@ root, claude-dev). Pretty-printer: `mir-lens/mir_lens.py`.
   `build/host/stage1-mir-lens`, and carries the two non-upstream flags the
   recipe needs (`-Zinline-mir-history-depth-limit`,
   `-Zinline-mir-top-down-depth-limit`).
+- Branches (all on `origin` = CGMossa/rust):
+  `inline-mir-depth-limit-flags` is the compiler patch alone (upstream-PR
+  candidate); `mir-lens-for-science` is that commit + `mir-lens/` (printer,
+  `README.md`, intro, design notes) — the branch colleagues clone. The
+  printer and design notes exist **twice**: here on `claude-dev`
+  (`mir-lens/`, `numerical-accuracy-lens.md` at the root) and on
+  `mir-lens-for-science` (all under `mir-lens/`). After changing either
+  copy, commit the same change to the other and push both.
 - **If missing** — `./x clean` deletes everything under `build/host/`
   except LLVM, *including this snapshot*: rebuild and re-snapshot —
   ```bash
-  git switch inline-mir-depth-limit-flags
+  git switch mir-lens-for-science   # same compiler; keeps mir-lens/ in the tree
   ./x build library
   cp -Rc build/host/stage1 build/host/stage1-mir-lens   # APFS clone
   rustup toolchain link rust-mir-lens build/host/stage1-mir-lens
