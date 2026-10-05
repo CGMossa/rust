@@ -24,7 +24,8 @@ root, claude-dev). Pretty-printer: `mir-lens/mir_lens.py`.
   `build/host/stage1-mir-lens`, and carries the two non-upstream flags the
   recipe needs (`-Zinline-mir-history-depth-limit`,
   `-Zinline-mir-top-down-depth-limit`).
-- **If missing** (e.g. after `./x clean`): rebuild and re-snapshot —
+- **If missing** — `./x clean` deletes everything under `build/host/`
+  except LLVM, *including this snapshot*: rebuild and re-snapshot —
   ```bash
   git switch inline-mir-depth-limit-flags
   ./x build library
@@ -45,9 +46,12 @@ root, claude-dev). Pretty-printer: `mir-lens/mir_lens.py`.
   channel = "rust-mir-lens"
   ```
   Custom linked names are valid channels; `rustup which rustc` then resolves
-  to the snapshot, and since stage1 ships no cargo, rustup's shim silently
-  falls back to the default toolchain's cargo — exactly what the recipe
-  expects.
+  to the snapshot, and since stage1 ships no cargo, rustup falls back to
+  the cargo of the first *installed* of nightly → beta → stable — not the
+  default toolchain (here: nightly cargo 1.100 although stable is default;
+  rustup prints `info: falling back to …`). For a specific cargo, use
+  `RUSTC=$(rustup which --toolchain rust-mir-lens rustc) cargo …`
+  (verified 2026-10-05).
 - Pinning only makes the flags *available* — the lens is still the explicit
   recipe invocation below. Do NOT bake the recipe's RUSTFLAGS into a
   project's `.cargo/config.toml`; they would distort every normal build.
@@ -64,13 +68,18 @@ RUSTFLAGS="-Zcross-crate-inline-threshold=always" \
   -Zinline-mir-threshold=100000 -Zinline-mir-hint-threshold=100000 \
   -Zinline-mir-history-depth-limit=64 -Zinline-mir-top-down-depth-limit=100000 \
   -Zinline-mir-preserve-debug=yes \
-  --emit=mir
+  --emit=mir=lens.mir
 ```
 
-- Output lands in `$CARGO_TARGET_DIR/release/deps/<crate>-<hash>.mir`
-  (this machine sets `CARGO_TARGET_DIR=/Users/elea/.cargo-target` in
-  `~/.cargo/config.toml` — the crate-local `target/` will NOT exist).
-- Delete stale `.mir` files first and `touch src/lib.rs` to force re-emit.
+- `--emit=mir=<path>` writes exactly one file at a known path (relative
+  paths resolve against the workspace root, where cargo runs rustc). Don't
+  go hunting in the target dir: where a bare `--emit=mir` lands depends on
+  the cargo version — nightly cargo 1.100 (new build-dir layout) puts it in
+  `<target>/release/build/<crate>/<hash>/out/`, not `release/deps/`, and
+  this machine's target dir is `/Users/elea/.cargo-target` anyway
+  (verified 2026-10-05).
+- Cargo skips the rustc run when nothing changed, so `touch src/lib.rs` to
+  force a re-emit.
 - `RUSTFLAGS` must carry `-Zcross-crate-inline-threshold=always` so
   *dependencies* encode their MIR for inlining; the other flags go after
   `--` (leaf crate only).
@@ -104,19 +113,23 @@ python3 mir-lens/mir_lens.py <file>.mir --fn <substring> --floor libm --floor <c
   noise reduction) but keeps each surviving block's control flow, so loops
   stay readable: `(loop head)` blocks show their exit condition even when
   it's iterator plumbing, and `[loop back-edge]` gotos are kept.
-- `--scope` is a dataflow slice: statements whose inlining provenance
-  matches, **plus** statements consuming values that scope produced (so the
-  criterion that *uses* a scoped result is included). Provenance tags print
-  as `← callee::path` with generics stripped, so filter by bare names
-  (`delimit_subproblem`, not `SymmetricEigen::<f64>::delimit_subproblem`).
+- `--scope` is a dataflow slice: statements whose inlining chain contains a
+  match (so callees inlined *into* the scoped fn count), **plus** statements
+  consuming values that scope produced (so the criterion that *uses* a
+  scoped result is included). Combine with `--fp-core` to drop the iterator
+  plumbing. Provenance tags print as `← callee::path` (innermost callee)
+  with generics stripped, so filter by bare names (`delimit_subproblem`,
+  not `SymmetricEigen::<f64>::delimit_subproblem`).
 - `--floor` (repeatable) is the abstraction floor: statements whose
-  provenance matches collapse into one `⟨callee: N stmts elided⟩` marker —
-  use it to keep libm/builtin internals symbolic (`--floor libm`) or to hide
-  an already-reviewed helper.
+  inlining chain matches collapse into one `⟨callee: N stmts elided⟩` marker
+  (labelled by the outermost match) — use it to keep libm/builtin internals
+  symbolic (`--floor libm`) or to hide an already-reviewed helper.
 - Known printer gaps: some `Result`/`ControlFlow` enum plumbing still shows
-  (full folding needs tier-2 expression-DAG reconstruction); `--floor`
-  elides by provenance, so values flowing out of a floored scope may print
-  as raw `_N` locals.
+  (full folding needs tier-2 expression-DAG reconstruction). Provenance is
+  the scope that *declares* a statement's destination local, and the inliner
+  reuses caller locals for callee arguments — so e.g. `f64::clamp`'s body
+  is tagged with its caller and `--floor clamp` can't reach it; values
+  flowing out of a floored scope may print as raw `_N` locals.
 
 ## Scoping the analysis
 
@@ -131,8 +144,8 @@ the scratch crate's equivalent: `examples/mir_lens.rs` plus
 `[[example]] name = "mir_lens"` / `crate-type = ["lib"]` in Cargo.toml (a lib
 target makes every `pub fn` a codegen root; a bin would dead-code them
 without a `main` calling each with runtime args). Invoke the recipe as
-`cargo +rust-mir-lens rustc --release --example mir_lens -- <flags>`; the
-.mir lands in `<target-dir>/release/examples/`, and `cargo test` builds
+`cargo +rust-mir-lens rustc --release --example mir_lens -- <flags>` (with
+`--emit=mir=lens.mir` as above), and `cargo test` builds
 examples so the wrappers track the crate API. Do **not** house the wrappers
 in a feature-gated module of the library itself: that makes the whole
 library the leaf crate and the inline flags then chew every function in it —

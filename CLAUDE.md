@@ -119,7 +119,7 @@ Test suites live under `tests/`; the big one is `tests/ui`. Run a subset:
 ```bash
 rustup toolchain link stage1 build/host/stage1
 rustc +stage1 -vV     # version ends in -dev → it's your local build
-cargo +stage1 build   # borrows cargo from your nightly/beta toolchain
+cargo +stage1 build   # borrows cargo: first installed of nightly, beta, stable
 ```
 
 The linked toolchain updates whenever you re-run `./x build`/`./x test`.
