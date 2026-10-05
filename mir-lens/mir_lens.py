@@ -72,18 +72,42 @@ def split_functions(text):
         yield m, body
 
 
+def strip_generics(s):
+    """Drop `::<...>` turbofish args, balancing nested angle brackets
+    (a non-greedy regex leaves `>::sum<…>>` debris on nested generics)."""
+    out, i = [], 0
+    while i < len(s):
+        if s.startswith("::<", i):
+            depth, i = 1, i + 3
+            while i < len(s) and depth:
+                if s[i] == "<":
+                    depth += 1
+                elif s[i] == ">" and s[i - 1] != "-":  # skip `->` in fn types
+                    depth -= 1
+                i += 1
+        else:
+            out.append(s[i])
+            i += 1
+    return "".join(out)
+
+
 class Scope:
     def __init__(self, num, inlined, parent):
         self.num, self.inlined, self.parent = num, inlined, parent
 
-    def provenance(self):
-        s = self
+    def chain(self):
+        """Inlined callees enclosing this scope, innermost first."""
+        out, s = [], self
         while s is not None:
             if s.inlined:
                 # strip generic clutter for the tag
-                return re.sub(r"::<.*?>", "", s.inlined)
+                out.append(strip_generics(s.inlined))
             s = s.parent
-        return None
+        return out
+
+    def provenance(self):
+        chain = self.chain()
+        return chain[0] if chain else None
 
 
 class Fn:
@@ -197,30 +221,34 @@ class Renderer:
         self.fp_core = fp_core
         self.scope_filter = scope_filter
         self.floor = floor or []
-        # locals declared in a scope matching --scope (for dataflow closure)
+        # locals declared in a scope matching --scope (for dataflow closure);
+        # matched against the whole inlining chain, so callees inlined *into*
+        # the scoped fn count as inside it
         self.scope_locals = set()
         if scope_filter:
-            for loc, sc in fn.decl_scope.items():
-                prov = sc.provenance() if sc else None
-                if prov and scope_filter in prov:
+            for loc in fn.decl_scope:
+                if self.in_chain(loc, scope_filter):
                     self.scope_locals.add(loc)
         self.use_count = defaultdict(int)
+        self.use_blocks = defaultdict(set)
         self.def_count = defaultdict(int)
-        for stmts in fn.blocks.values():
+        for bb, stmts in fn.blocks.items():
             for kind, payload in stmts:
+                used = ""
                 if kind == "assign":
-                    place, rvalue = payload
+                    place, used = payload
                     self._count_defs(place)
-                    for loc in LOCAL_RE.findall(rvalue):
-                        self.use_count[loc] += 1
                 elif kind == "call":
-                    place, _, args, _ = payload
+                    place, _, used, _ = payload
                     self._count_defs(place)
-                    for loc in LOCAL_RE.findall(args):
-                        self.use_count[loc] += 1
                 elif kind == "switch":
-                    for loc in LOCAL_RE.findall(payload[0]):
-                        self.use_count[loc] += 1
+                    used = payload[0]
+                for loc in LOCAL_RE.findall(used):
+                    self.use_count[loc] += 1
+                    self.use_blocks[loc].add(bb)
+        self.succ, self.preds, self.back_edges, self.rpo = self.cfg()
+        # call results folded into their return block: bb -> {local: Expr}
+        self.carry = defaultdict(dict)
 
     def _count_defs(self, place):
         if LOCAL_RE.fullmatch(place):
@@ -237,6 +265,13 @@ class Renderer:
     def provenance(self, loc):
         sc = self.fn.decl_scope.get(loc)
         return sc.provenance() if sc else None
+
+    def chain(self, loc):
+        sc = self.fn.decl_scope.get(loc)
+        return sc.chain() if sc else []
+
+    def in_chain(self, loc, pattern):
+        return any(pattern in p for p in self.chain(loc))
 
     # -- operand / rvalue -> Expr
     def operand(self, s, env):
@@ -313,66 +348,14 @@ class Renderer:
         fn = self.fn
         args = ", ".join(f"{self.local_name(l)}: {t}" for l, t in fn.arg_locals)
         out.append(f"fn {fn.name}({args}) -> {fn.ret}")
-        back_targets = self.back_edge_targets()
+        back_targets = {v for _, v in self.back_edges}
+        # build in reverse postorder so a call's result is carried into its
+        # return block before that block renders; print in source order
+        rendered = {}
+        for bb in self.rpo:
+            rendered[bb] = self.render_block(bb, back_targets)
         for bb in fn.block_order:
-            stmts = fn.blocks[bb]
-            if self.fp_core and self.block_is_panic_path(bb):
-                continue
-            env = {}
-            lines = []
-            for kind, payload in stmts:
-                if kind == "assign":
-                    place, rv = payload
-                    expr = self.rvalue(rv, env)
-                    self.emit_or_bind(place, expr, env, lines, call=False)
-                elif kind == "call":
-                    place, callee, cargs, ret = payload
-                    callee_short = re.sub(r"::<.*?>", "", callee)
-                    callee_short = re.sub(r"<(.+?) as (.+?)>", r"\2", callee_short)
-                    if PANIC_CALLEES.search(callee):
-                        lines.append((None, f"!panic: {callee_short}(…)", None,
-                                      False, set()))
-                        continue
-                    exprs = [self.operand(a, env)
-                             for a in split_args(cargs) if a.strip()]
-                    leaves = set().union(*(e.leaves for e in exprs)) if exprs else set()
-                    text = f"{callee_short}({', '.join(e.text for e in exprs)})"
-                    self.emit_or_bind(place, Expr(text, leaves, atomic=True),
-                                      env, lines, call=True)
-                elif kind == "switch":
-                    disc, arms = payload
-                    d = self.operand(disc, env)
-                    fp = any(self.is_fp(l) for l in d.leaves) or \
-                        bool(re.search(r"\d\.\d|sqrt|fabs|abs\(", d.text))
-                    lines.append((None, f"switch {d.text} -> {', '.join(arms)}",
-                                  None, fp, d.leaves))
-                elif kind == "goto":
-                    loop = " [loop back-edge]" if payload in back_targets and \
-                        fn.block_order.index(payload) <= fn.block_order.index(bb) else ""
-                    lines.append((None, f"goto {payload}{loop}", None, False, set()))
-                elif kind == "return":
-                    lines.append((None, "return", None, False, set()))
-                elif kind == "other_term":
-                    lines.append((None, payload.rstrip(";"), None, False, set()))
-            lines = self.apply_floor(lines)
-            if self.scope_filter:
-                # dataflow closure: keep lines produced *in* the scope, and
-                # lines that *consume* a value the scope produced
-                lines = [l for l in lines
-                         if (l[2] and self.scope_filter in l[2])
-                         or (l[4] & self.scope_locals)]
-            elif self.fp_core:
-                # keep float-dataflow lines; for blocks that keep any, also
-                # keep their control flow so loop structure stays readable,
-                # and always keep a loop head's branch condition
-                kept = [l for l in lines if l[3]]
-                if kept:
-                    lines = [l for l in lines
-                             if l[3] or l[1].startswith(("switch", "goto", "return"))]
-                elif bb in back_targets:
-                    lines = [l for l in lines if l[1].startswith("switch")]
-                else:
-                    lines = []
+            lines = rendered.get(bb)
             if not lines:
                 continue
             head = f"  {bb}" + (" (loop head)" if bb in back_targets else "") + ":"
@@ -380,6 +363,69 @@ class Renderer:
             for _, text, prov, _fp, _lv in lines:
                 tag = f"   ← {prov}" if prov else ""
                 out.append(f"    {text}{tag}")
+
+    def render_block(self, bb, back_targets):
+        fn = self.fn
+        stmts = fn.blocks[bb]
+        if self.fp_core and self.block_is_panic_path(bb):
+            return []
+        env = dict(self.carry.get(bb, {}))
+        lines = []
+        for kind, payload in stmts:
+            if kind == "assign":
+                place, rv = payload
+                expr = self.rvalue(rv, env)
+                self.emit_or_bind(place, expr, env, lines, bb)
+            elif kind == "call":
+                place, callee, cargs, ret = payload
+                callee_short = strip_generics(callee)
+                callee_short = re.sub(r"<(.+?) as (.+?)>", r"\2", callee_short)
+                if PANIC_CALLEES.search(callee):
+                    lines.append((None, f"!panic: {callee_short}(…)", None,
+                                  False, set()))
+                    continue
+                exprs = [self.operand(a, env)
+                         for a in split_args(cargs) if a.strip()]
+                leaves = set().union(*(e.leaves for e in exprs)) if exprs else set()
+                text = f"{callee_short}({', '.join(e.text for e in exprs)})"
+                if self.emit_or_bind(place, Expr(text, leaves, atomic=True),
+                                     env, lines, bb, ret=ret):
+                    # folded into the return block: keep the edge visible
+                    lines.append((None, f"goto {ret}", None, False, set()))
+            elif kind == "switch":
+                disc, arms = payload
+                d = self.operand(disc, env)
+                fp = any(self.is_fp(l) for l in d.leaves) or \
+                    bool(re.search(r"\d\.\d|sqrt|fabs|abs\(", d.text))
+                lines.append((None, f"switch {d.text} -> {', '.join(arms)}",
+                              None, fp, d.leaves))
+            elif kind == "goto":
+                loop = " [loop back-edge]" if (bb, payload) in self.back_edges else ""
+                lines.append((None, f"goto {payload}{loop}", None, False, set()))
+            elif kind == "return":
+                lines.append((None, "return", None, False, set()))
+            elif kind == "other_term":
+                lines.append((None, payload.rstrip(";"), None, False, set()))
+        lines = self.apply_floor(lines)
+        if self.scope_filter:
+            # dataflow closure: keep lines produced *in* the scope, and
+            # lines that *consume* a value the scope produced
+            lines = [l for l in lines
+                     if (l[0] and self.in_chain(l[0], self.scope_filter))
+                     or (l[4] & self.scope_locals)]
+        if self.fp_core:
+            # keep float-dataflow lines; for blocks that keep any, also
+            # keep their control flow so loop structure stays readable,
+            # and always keep a loop head's branch condition
+            kept = [l for l in lines if l[3]]
+            if kept:
+                lines = [l for l in lines
+                         if l[3] or l[1].startswith(("switch", "goto", "return"))]
+            elif bb in back_targets:
+                lines = [l for l in lines if l[1].startswith("switch")]
+            else:
+                lines = []
+        return lines
 
     def apply_floor(self, lines):
         """Collapse runs of statements whose provenance matches a --floor
@@ -394,8 +440,12 @@ class Renderer:
                             None, True, set()))
             run_prov, run_n = None, 0
         for l in lines:
-            prov = l[2]
-            if prov and any(f in prov for f in self.floor):
+            # label by the outermost floored callee in the inlining chain, so
+            # everything inlined beneath it collapses into the same marker
+            hits = [p for p in (self.chain(l[0]) if l[0] else [])
+                    if any(f in p for f in self.floor)]
+            prov = hits[-1] if hits else None
+            if prov:
                 if run_prov not in (None, prov):
                     flush()
                 run_prov, run_n = prov, run_n + 1
@@ -405,19 +455,26 @@ class Renderer:
         flush()
         return out
 
-    def emit_or_bind(self, place, expr, env, lines, call):
-        """Single-use pure defs fold into their use; the rest print."""
+    def emit_or_bind(self, place, expr, env, lines, bb, ret=None):
+        """Single-use pure defs fold into their use; the rest print.
+
+        `env` is per block, so a def only folds when its use is in the same
+        block. A call (`ret` set) terminates its block: its result folds into
+        the return block when that is the only place it flows. Returns True
+        when the result was carried there."""
         if LOCAL_RE.fullmatch(place):
             uses = self.use_count[place]
             defs = self.def_count[place]
             named = place in self.fn.debug or place == "_0"
-            if not call and uses == 1 and defs == 1 and not named:
-                env[place] = expr
-                return
-            if call and uses == 1 and defs == 1 and not named:
-                # calls are values too; fold unless result feeds many places
-                env[place] = expr
-                return
+            if uses == 1 and defs == 1 and not named:
+                (use_bb,) = self.use_blocks[place]
+                if ret is None and use_bb == bb:
+                    env[place] = expr
+                    return False
+                if ret is not None and use_bb == ret and self.preds[ret] == {bb}:
+                    # calls are values too; fold unless result feeds many places
+                    self.carry[ret][place] = expr
+                    return True
             name = self.local_name(place)
             env.pop(place, None)
             prov = self.provenance(place)
@@ -439,23 +496,52 @@ class Renderer:
                 return True
         return False
 
-    def back_edge_targets(self):
-        order = {b: i for i, b in enumerate(self.fn.block_order)}
-        targets = set()
-        for bb, stmts in self.fn.blocks.items():
-            for kind, payload in stmts:
-                dests = []
-                if kind == "goto":
-                    dests = [payload]
-                elif kind == "switch":
-                    dests = [a.split(": ")[1] for a in payload[1] if ": " in a]
-                elif kind == "call":
-                    if payload[3].startswith("bb"):
-                        dests = [payload[3]]
-                for d in dests:
-                    if d in order and order[d] <= order.get(bb, 0):
-                        targets.add(d)
-        return targets
+    def successors(self, bb):
+        """Normal-control-flow successors (unwind edges excluded)."""
+        dests = []
+        for kind, payload in self.fn.blocks[bb]:
+            if kind == "goto":
+                dests.append(payload)
+            elif kind == "switch":
+                dests += [a.split(": ")[1] for a in payload[1] if ": " in a]
+            elif kind == "call":
+                if payload[3].startswith("bb"):
+                    dests.append(payload[3])
+            elif kind == "other_term":
+                dests += re.findall(r"(?<!unwind: )\b(bb\d+)", payload)
+        return [d for d in dests if d in self.fn.blocks]
+
+    def cfg(self):
+        """Successors, predecessors, back edges and reverse postorder.
+
+        Back edges come from a DFS (an edge into a block still on the stack),
+        not from block numbering: MIR numbers are not a topological order."""
+        succ = {bb: self.successors(bb) for bb in self.fn.block_order}
+        preds = defaultdict(set)
+        for u, vs in succ.items():
+            for v in vs:
+                preds[v].add(u)
+        back, rpo, state = set(), [], {}
+        for root in self.fn.block_order:
+            if root in state:
+                continue
+            post = []
+            state[root] = "open"
+            stack = [(root, iter(succ[root]))]
+            while stack:
+                u, it = stack[-1]
+                v = next(it, None)
+                if v is None:
+                    state[u] = "done"
+                    post.append(u)
+                    stack.pop()
+                elif v not in state:
+                    state[v] = "open"
+                    stack.append((v, iter(succ[v])))
+                elif state[v] == "open":
+                    back.add((u, v))
+            rpo += reversed(post)
+        return succ, preds, back, rpo
 
 
 def split_args(s):
@@ -490,7 +576,8 @@ def main():
                     "provenance matches SUBSTR into one elision marker "
                     "(repeatable; e.g. --floor libm --floor compiler_builtins)")
     args = ap.parse_args()
-    text = open(args.mir_file).read()
+    with open(args.mir_file) as f:
+        text = f.read()
     out = []
     for m, body in split_functions(text):
         if args.only and args.only not in m["name"]:
