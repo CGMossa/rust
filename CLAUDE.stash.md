@@ -1,3 +1,9 @@
+> **Stashed 2026-10-05.** Upstream rust-lang/rust now tracks its own
+> `CLAUDE.md` (just `@AGENTS.md`, added in 4615c4aee8f) plus `AGENTS.md`, so
+> this file was renamed from `CLAUDE.md` to stop colliding with it. Claude Code
+> no longer auto-loads it. To be compared with upstream's `AGENTS.md`
+> eventually: `git show upstream/main:AGENTS.md | diff - CLAUDE.stash.md`.
+
 # Working on rust-lang/rust
 
 This is the main Rust repo: the compiler (`compiler/`), standard library
@@ -8,7 +14,8 @@ standalone tools (e.g. `src/tools/rust-analyzer`) that say so.
 
 ## Working with `claude-dev` (AI files stay out of PRs)
 
-These AI/dev files — `CLAUDE.md`, `EXPERIMENTS.md`, `.claude/skills/` — are
+These AI/dev files — `CLAUDE.stash.md` (this file), `EXPERIMENTS.md`,
+`.claude/skills/` — are
 **tracked only on the `claude-dev` branch**. rust-lang/rust PRs must not contain
 them. The workflow:
 
@@ -16,7 +23,8 @@ them. The workflow:
 - **On any feature branch**, they don't exist in git — "dump" the current copies
   in as untracked files:
   ```bash
-  git archive claude-dev CLAUDE.md EXPERIMENTS.md .claude/skills | tar -x
+  git archive claude-dev EXPERIMENTS.md .claude/skills | tar -x
+  # not CLAUDE.md: upstream tracks its own, the dump would overwrite it
   ```
 - They're listed in `.git/info/exclude` (repo-local), so on feature branches git
   **ignores** them — they never show in `git status` and can't be caught by

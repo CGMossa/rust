@@ -2,7 +2,7 @@
 
 Running log of what we're hacking on in this checkout, so a fresh session
 knows the state without spelunking through branches. Tracked only on
-`claude-dev` (see the "Working with claude-dev" section in `CLAUDE.md`).
+`claude-dev` (see the "Working with claude-dev" section in `CLAUDE.stash.md`).
 
 _Last updated: 2026-08-07._
 
